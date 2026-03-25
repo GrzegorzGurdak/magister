@@ -1,0 +1,42 @@
+{
+  "version": 5,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "gcc-debug",
+      "displayName": "GCC Debug",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build/gcc-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "clang-debug",
+      "displayName": "Clang Debug",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build/clang-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "build-gcc",
+      "configurePreset": "gcc-debug"
+    },
+    {
+      "name": "build-clang",
+      "configurePreset": "clang-debug"
+    }
+  ]
+}
