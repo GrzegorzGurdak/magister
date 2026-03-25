@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 project(sfml_example LANGUAGES CXX)
 
+include(FetchContent)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -19,13 +21,37 @@ if(MINGW)
 	set(CMAKE_MAP_IMPORTED_CONFIG_DEBUG Release)
 endif()
 
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+
+# Try to find GLUT on the system first
+find_package(GLUT QUIET)
+
+# If found, use it; otherwise skip (GLUT is optional - modern OpenGL doesn't require it)
+if(GLUT_FOUND)
+	message(STATUS "Found system GLUT: ${GLUT_LIBRARIES}")
+else()
+	message(STATUS "GLUT not found on system - GLUT/GLU features will not be available")
+	# To add GLUT support: install freeglut-devel or build freeglut and set up CMAKE_PREFIX_PATH
+	set(GLUT_INCLUDE_DIR "")
+	set(GLUT_LIBRARIES "")
+endif()
+
 find_package(OpenGL REQUIRED)
 find_package(SFML CONFIG REQUIRED COMPONENTS Graphics Window System)
 
-add_executable(sfml_example src/main.cpp)
+# Auto-pick all project source files, e.g. src/MVec.cpp
+file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
+
+add_executable(sfml_example ${APP_SOURCES})
+if(GLUT_INCLUDE_DIR)
+	target_include_directories(sfml_example PRIVATE ${GLUT_INCLUDE_DIR})
+endif()
 target_link_libraries(sfml_example PRIVATE SFML::Graphics SFML::Window SFML::System OpenGL::GL)
+if(GLUT_LIBRARIES)
+	target_link_libraries(sfml_example PRIVATE ${GLUT_LIBRARIES})
+endif()
 if(WIN32)
-	target_link_libraries(sfml_example PRIVATE opengl32)
+	target_link_libraries(sfml_example PRIVATE opengl32 glu32)
 endif()
 
 if(WIN32)
