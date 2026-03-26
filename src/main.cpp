@@ -5,7 +5,7 @@
 
 #include "OpenGLGraphics.hpp"
 #include "MVec.hpp"
-#include "Sphere.hpp"
+#include "planet.hpp"
 
 int main(int argc, char** argv)
 {
@@ -13,10 +13,10 @@ int main(int argc, char** argv)
     std::cout << "SFML 3 + OpenGL demo" << std::endl;
     std::cout << "Vec2 a: " << a << std::endl;
 
-    OpenGLGraphics oglGraphics(700, 1.5f, 0);
+    OpenGLGraphics oglGraphics(900, 1.5f, 0);
 
-    sf::RenderWindow window(sf::VideoMode({800, 600}), "SFML 3 + CMake");
-    window.setFramerateLimit(60);
+    sf::RenderWindow window(sf::VideoMode({1200, 900}), "SFML 3 + CMake");
+    window.setFramerateLimit(30);
 
     if (!window.setActive(true))
     {
@@ -41,7 +41,7 @@ int main(int argc, char** argv)
 
     float angle = 0.f;
 
-    Sphere ball(Vec3(0.f, 0.f, 0.f), 50.f, 1);
+    Planet ball(Vec3(0.f, 0.f, 0.f), 30.f, 5, true);
 
     while (window.isOpen())
     {
@@ -51,20 +51,25 @@ int main(int argc, char** argv)
             {
                 window.close();
             }
-            //if pressed L key switch light
             else if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>())
-        {
-            if (keyPressed->scancode == sf::Keyboard::Scancode::L)
-                oglGraphics.switchLight();
-        }
+            {
+                if (keyPressed->scancode == sf::Keyboard::Scancode::L)
+                    oglGraphics.switchLight();
+                else if (keyPressed->scancode == sf::Keyboard::Scancode::W)
+                    ball.toggleWireframe();
+                else if (keyPressed->scancode == sf::Keyboard::Scancode::F)
+                    ball.toggleFilled();
+            }
         }
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        glMatrixMode(GL_MODELVIEW);
-        glLoadIdentity();
-        glTranslatef(0.f, 0.f, -220.f);
-        glRotatef(angle, 0.f, 1.f, 0.f);
+        // glMatrixMode(GL_MODELVIEW);
+        // glLoadIdentity();
+        // glTranslatef(0.f, 0.f, -220.f);
+        // glRotatef(angle, 0.f, 1.f, 0.f);
+
+        oglGraphics.updateCamera(120, angle,  0.1f);
 
         // glBegin(GL_TRIANGLES);
         // glColor3f(1.f, 0.2f, 0.25f);
@@ -79,9 +84,9 @@ int main(int argc, char** argv)
 
         window.draw(ball);
 
-        angle += 0.8f;
-        if (angle >= 360.f)
-            angle -= 360.f;
+        angle += 0.002f;
+        if (angle >= M_PIF * 2.f)
+            angle -= M_PIF * 2.f;
 
         window.display();
     }

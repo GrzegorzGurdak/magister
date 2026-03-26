@@ -35,10 +35,15 @@ void OpenGLGraphics::switchLight() {
 void OpenGLGraphics::setCamera() {
     glLoadIdentity();
     gluLookAt(
-        400 + R * cosf(theta) * cosf(phi), 300 + R * sinf(phi), 150 + R * sinf(theta) * cosf(phi),
-        400,   300,   150,
+        centerX + R * cosf(theta) * cosf(phi), centerY + R * sinf(phi), centerZ + R * sinf(theta) * cosf(phi),
+        centerX, centerY, centerZ,
         0,   R * cosf(phi),   0
     );
+    // gluLookAt(
+    //     eyex, eyey, eyez,
+    //     centerx, centery, centerz,
+    //     upx, upy, upz
+    // );
 }
 
 void OpenGLGraphics::reshapeScreen(sf::Vector2u size) {

@@ -1,55 +1,224 @@
 #pragma once
 
-#ifndef BALL_HPP
-#define BALL_HPP
+#ifndef SPHERE_HPP
+#define SPHERE_HPP
 
 #include <vector>
+#include <array>
+#include <unordered_map>
+#include <algorithm>
+#include <cmath>
 #include <SFML/Graphics.hpp>
 #include <SFML/OpenGL.hpp>
+
+#include <iostream>
 
 #include "MVec.hpp"
 
 class Sphere : public sf::Drawable
 {
 public:
-    Sphere(const Vec3& _position, float _radius, int density = 1) {
-        vertices.reserve(density * 4);
+    Sphere(const Vec3& _position, float _radius, int _density = 1, bool _drawWireframe = false) {
         position = _position;
         radius = _radius;
-        density = density;
-
-        // vertices.push_back(Vec3(0.f, 0.f, radius));
-        // vertices.push_back(Vec3(, 0.f, -radius/3));
-        // for (int i = 0; i < 4; i++) {
-        //     float phi = M_PIF * (i + 1) / (density + 1);
-        //     for (int j = 0; j < density * 2; j++) {
-        //         float theta = M_PIF * j / density;
-        //         vertices.push_back(Vec3(sinf(theta) * cosf(phi), sinf(phi), cosf(theta) * cosf(phi)) * radius);
-        //     }
-        // }
-        vertices.push_back(Vec3(1.f, 1.f, 1.f) * radius);
-        vertices.push_back(Vec3(-1.f, -1.f, 1.f) * radius);
-        vertices.push_back(Vec3(-1.f, 1.f, -1.f) * radius);
-        vertices.push_back(Vec3(1.f, -1.f, -1.f) * radius);
+        this->density = _density;
+        this->drawWireframe = _drawWireframe;
+        buildGeodesicMesh();
     }
     ~Sphere() {};
 
     void draw(sf::RenderTarget& target, sf::RenderStates states) const override{
-        glBegin(GL_TRIANGLE_STRIP);
-        float i = 0.f;
-        for (const Vec3& v : vertices) {
-            glColor3f(.2f, i, .2f); i+= 0.2f;
-            glVertex3f(position.x + v.x, position.y + v.y, position.z + v.z);
+        (void)target;
+        (void)states;
+
+        //std::cout << "Drawing sphere at position: " << position << " with radius: " << radius << std::endl;
+
+        if (!drawFilled && !drawWireframe)
+            return;
+
+        glPushMatrix();
+        glTranslatef(position.x, position.y, position.z);
+
+        if (drawFilled)
+        {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            glBegin(GL_TRIANGLES);
+            for (const auto& face : indices)
+            {
+                const Vec3& n0 = vertices[face[0]];
+                const Vec3& n1 = vertices[face[1]];
+                const Vec3& n2 = vertices[face[2]];
+
+                const Vec3 p0 = displacedPoint(n0);
+                const Vec3 p1 = displacedPoint(n1);
+                const Vec3 p2 = displacedPoint(n2);
+
+                glNormal3f(n0.x, n0.y, n0.z);
+                const Vec3 c0 = fillColorForVertex(n0);
+                glColor3f(c0.x, c0.y, c0.z);
+                glVertex3f(p0.x, p0.y, p0.z);
+
+                glNormal3f(n1.x, n1.y, n1.z);
+                const Vec3 c1 = fillColorForVertex(n1);
+                glColor3f(c1.x, c1.y, c1.z);
+                glVertex3f(p1.x, p1.y, p1.z);
+
+                glNormal3f(n2.x, n2.y, n2.z);
+                const Vec3 c2 = fillColorForVertex(n2);
+                glColor3f(c2.x, c2.y, c2.z);
+                glVertex3f(p2.x, p2.y, p2.z);
+            }
+            glEnd();
         }
-        glVertex3f(position.x + vertices[0].x, position.y + vertices[0].y, position.z + vertices[0].z);
-        glEnd();
+
+        if (drawWireframe)
+        {
+            glDisable(GL_LIGHTING);
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            glLineWidth(1.2f);
+            glColor3f(wireframeColor.x, wireframeColor.y, wireframeColor.z);
+            glBegin(GL_TRIANGLES);
+            for (const auto& face : indices)
+            {
+                const Vec3& n0 = vertices[face[0]];
+                const Vec3& n1 = vertices[face[1]];
+                const Vec3& n2 = vertices[face[2]];
+
+                const Vec3 p0 = displacedPoint(n0);
+                const Vec3 p1 = displacedPoint(n1);
+                const Vec3 p2 = displacedPoint(n2);
+
+                glVertex3f(p0.x, p0.y, p0.z);
+                glVertex3f(p1.x, p1.y, p1.z);
+                glVertex3f(p2.x, p2.y, p2.z);
+            }
+            glEnd();
+            glEnable(GL_LIGHTING);
+        }
+
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+        glPopMatrix();
+    }
+
+    void toggleWireframe() {
+        drawWireframe = !drawWireframe;
+    }
+
+    void toggleFilled() {
+        drawFilled = !drawFilled;
+    }
+
+protected:
+    virtual Vec3 fillColorForVertex(const Vec3& normal) const
+    {
+        (void)normal;
+        return fillColor;
+    }
+
+    virtual float radiusOffsetForVertex(const Vec3& normal) const
+    {
+        (void)normal;
+        return 0.0f;
+    }
+
+    Vec3 displacedPoint(const Vec3& normal) const
+    {
+        const float r = radius + radiusOffsetForVertex(normal);
+        return normal * r;
+    }
+
+    static Vec3 normalize(const Vec3& v)
+    {
+        const float len = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+        if (len <= 0.0f)
+            return Vec3::nullV;
+
+        return Vec3(v.x / len, v.y / len, v.z / len);
     }
 
 private:
+    unsigned int midpointIndex(unsigned int i0, unsigned int i1, std::unordered_map<unsigned long long, unsigned int>& cache)
+    {
+        const unsigned int a = std::min(i0, i1);
+        const unsigned int b = std::max(i0, i1);
+        const unsigned long long key = (static_cast<unsigned long long>(a) << 32) | static_cast<unsigned long long>(b);
+
+        const auto found = cache.find(key);
+        if (found != cache.end())
+            return found->second;
+
+        const Vec3 mid = normalize((vertices[a] + vertices[b]) * 0.5f);
+        vertices.push_back(mid);
+        const unsigned int idx = static_cast<unsigned int>(vertices.size() - 1);
+        cache.emplace(key, idx);
+        return idx;
+    }
+
+    void buildGeodesicMesh()
+    {
+        vertices.clear();
+        indices.clear();
+
+        const float t = (1.0f + std::sqrt(5.0f)) * 0.5f;
+
+        vertices = {
+            normalize(Vec3(-1.0f,  t,  0.0f)),
+            normalize(Vec3( 1.0f,  t,  0.0f)),
+            normalize(Vec3(-1.0f, -t,  0.0f)),
+            normalize(Vec3( 1.0f, -t,  0.0f)),
+            normalize(Vec3( 0.0f, -1.0f,  t)),
+            normalize(Vec3( 0.0f,  1.0f,  t)),
+            normalize(Vec3( 0.0f, -1.0f, -t)),
+            normalize(Vec3( 0.0f,  1.0f, -t)),
+            normalize(Vec3( t,  0.0f, -1.0f)),
+            normalize(Vec3( t,  0.0f,  1.0f)),
+            normalize(Vec3(-t,  0.0f, -1.0f)),
+            normalize(Vec3(-t,  0.0f,  1.0f))
+        };
+
+        indices = {
+            {0, 11, 5}, {0, 5, 1}, {0, 1, 7}, {0, 7, 10}, {0, 10, 11},
+            {1, 5, 9}, {5, 11, 4}, {11, 10, 2}, {10, 7, 6}, {7, 1, 8},
+            {3, 9, 4}, {3, 4, 2}, {3, 2, 6}, {3, 6, 8}, {3, 8, 9},
+            {4, 9, 5}, {2, 4, 11}, {6, 2, 10}, {8, 6, 7}, {9, 8, 1}
+        };
+
+        const int subdivisions = std::max(0, density);
+        for (int s = 0; s < subdivisions; ++s)
+        {
+            std::vector<std::array<unsigned int, 3>> next;
+            next.reserve(indices.size() * 4);
+            std::unordered_map<unsigned long long, unsigned int> cache;
+            cache.reserve(indices.size() * 3);
+
+            for (const auto& tri : indices)
+            {
+                const unsigned int a = midpointIndex(tri[0], tri[1], cache);
+                const unsigned int b = midpointIndex(tri[1], tri[2], cache);
+                const unsigned int c = midpointIndex(tri[2], tri[0], cache);
+
+                next.push_back({tri[0], a, c});
+                next.push_back({tri[1], b, a});
+                next.push_back({tri[2], c, b});
+                next.push_back({a, b, c});
+            }
+
+            indices.swap(next);
+        }
+    }
+
     Vec3 position;
     float radius;
-    std::vector<Vec3> vertices;
     int density;
+    std::vector<Vec3> vertices;
+    std::vector<std::array<unsigned int, 3>> indices;
+    bool drawWireframe = false;
+    bool drawFilled = true;
+    Vec3 fillColor = Vec3(0.35f, 0.35f, 0.35f);
+    Vec3 wireframeColor = Vec3(0.95f, 0.2f, 0.2f);
+
+    GLuint sphereList;
 };
 
-#endif // BALL_HPP
+#endif // SPHERE_HPP
