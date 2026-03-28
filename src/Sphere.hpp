@@ -25,7 +25,9 @@ public:
         this->drawWireframe = _drawWireframe;
         buildGeodesicMesh();
     }
-    ~Sphere() {};
+    virtual ~Sphere() {
+        deleteDisplayLists();
+    };
 
     void draw(sf::RenderTarget& target, sf::RenderStates states) const override{
         (void)target;
@@ -36,13 +38,46 @@ public:
         if (!drawFilled && !drawWireframe)
             return;
 
+        if (listsDirty)
+            prepareDraw();
+
         glPushMatrix();
         glTranslatef(position.x, position.y, position.z);
 
-        if (drawFilled)
+        if (drawFilled && fillList != 0)
+            glCallList(fillList);
+
+        if (drawWireframe && wireFrameList != 0)
         {
+            glDisable(GL_LIGHTING);
+            glCallList(wireFrameList);
+            glEnable(GL_LIGHTING);
+        }
+
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+        glPopMatrix();
+    }
+
+    void toggleWireframe() {
+        drawWireframe = !drawWireframe;
+    }
+
+    void toggleFilled() {
+        drawFilled = !drawFilled;
+    }
+
+    void prepareDraw() const
+    {
+        deleteDisplayLists();
+
+        fillList = glGenLists(1);
+        if (fillList != 0)
+        {
+            glNewList(fillList, GL_COMPILE);
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
             glBegin(GL_TRIANGLES);
+            std::cout << "Preparing draw: " << vertices.size() << " vertices, " << indices.size() << " faces." << std::endl;
             for (const auto& face : indices)
             {
                 const Vec3& n0 = vertices[face[0]];
@@ -69,11 +104,13 @@ public:
                 glVertex3f(p2.x, p2.y, p2.z);
             }
             glEnd();
+            glEndList();
         }
 
-        if (drawWireframe)
+        wireFrameList = glGenLists(1);
+        if (wireFrameList != 0)
         {
-            glDisable(GL_LIGHTING);
+            glNewList(wireFrameList, GL_COMPILE);
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
             glLineWidth(1.2f);
             glColor3f(wireframeColor.x, wireframeColor.y, wireframeColor.z);
@@ -93,20 +130,12 @@ public:
                 glVertex3f(p2.x, p2.y, p2.z);
             }
             glEnd();
-            glEnable(GL_LIGHTING);
+            glEndList();
         }
 
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        std::cout << "Display lists prepared: fillList=" << fillList << ", wireFrameList=" << wireFrameList << std::endl;
 
-        glPopMatrix();
-    }
-
-    void toggleWireframe() {
-        drawWireframe = !drawWireframe;
-    }
-
-    void toggleFilled() {
-        drawFilled = !drawFilled;
+        listsDirty = false;
     }
 
 protected:
@@ -138,6 +167,26 @@ protected:
     }
 
 private:
+    void invalidateDrawCache()
+    {
+        listsDirty = true;
+    }
+
+    void deleteDisplayLists() const
+    {
+        if (fillList != 0)
+        {
+            glDeleteLists(fillList, 1);
+            fillList = 0;
+        }
+
+        if (wireFrameList != 0)
+        {
+            glDeleteLists(wireFrameList, 1);
+            wireFrameList = 0;
+        }
+    }
+
     unsigned int midpointIndex(unsigned int i0, unsigned int i1, std::unordered_map<unsigned long long, unsigned int>& cache)
     {
         const unsigned int a = std::min(i0, i1);
@@ -206,6 +255,8 @@ private:
 
             indices.swap(next);
         }
+
+        invalidateDrawCache();
     }
 
     Vec3 position;
@@ -218,7 +269,9 @@ private:
     Vec3 fillColor = Vec3(0.35f, 0.35f, 0.35f);
     Vec3 wireframeColor = Vec3(0.95f, 0.2f, 0.2f);
 
-    GLuint sphereList;
+    mutable GLuint fillList = 0;
+    mutable GLuint wireFrameList = 0;
+    mutable bool listsDirty = true;
 };
 
 #endif // SPHERE_HPP

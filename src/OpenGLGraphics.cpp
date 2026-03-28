@@ -33,6 +33,7 @@ void OpenGLGraphics::switchLight() {
 }
 
 void OpenGLGraphics::setCamera() {
+    glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     gluLookAt(
         centerX + R * cosf(theta) * cosf(phi), centerY + R * sinf(phi), centerZ + R * sinf(theta) * cosf(phi),

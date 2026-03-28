@@ -41,7 +41,7 @@ int main(int argc, char** argv)
 
     float angle = 0.f;
 
-    Planet ball(Vec3(0.f, 0.f, 0.f), 30.f, 5, true);
+    Planet ball(Vec3(0.f, 0.f, 0.f), 30.f, 8, true);
 
     while (window.isOpen())
     {
@@ -67,7 +67,7 @@ int main(int argc, char** argv)
         // glMatrixMode(GL_MODELVIEW);
         // glLoadIdentity();
         // glTranslatef(0.f, 0.f, -220.f);
-        // glRotatef(angle, 0.f, 1.f, 0.f);
+        // glRotatef(angle*50.f, 0.f, 1.f, 0.f);
 
         oglGraphics.updateCamera(120, angle,  0.1f);
 
