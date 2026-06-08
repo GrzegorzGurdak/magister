@@ -31,7 +31,7 @@ protected:
         if (h < oceanLevel - 0.06f) return deepOceanColor;
         if (h < oceanLevel) return shallowOceanColor;
         if (h < oceanLevel + 0.02f) return beachColor;
-        if (h < 0.22f) return lowlandColor;
+        if (h < 0.32f) return lowlandColor;
         if (h < 0.45f) return highlandColor;
         return snowColor;
     }
@@ -71,8 +71,8 @@ private:
         return (a + b + c) / 3.0f;
     }
 
-    float terrainAmplitude = 8.0f;
-    float oceanLevel = -0.08f;
+    float terrainAmplitude = 16.0f; //8.0f;
+    float oceanLevel = 0.20f; //-0.08f;
 
     int octaves = 5;
     float persistence = 0.52f;

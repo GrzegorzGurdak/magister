@@ -27,21 +27,10 @@ int main(int argc, char** argv)
 	oglGraphics.reshapeScreen(window.getSize());
     oglGraphics.initOpenGL(argc, argv);
 
-    // glClearDepth(1.f);
-    // glClearColor(0.08f, 0.09f, 0.12f, 1.f);
-    // glEnable(GL_DEPTH_TEST);
-    // glDepthMask(GL_TRUE);
-
-    // enableLight();
-
-    // glMatrixMode(GL_PROJECTION);
-    // glLoadIdentity();
-    // const float ratio = 800.f / 600.f;
-    // glFrustum(-ratio, ratio, -1.f, 1.f, 1.f, 500.f);
 
     float angle = 0.f;
 
-    Planet ball(Vec3(0.f, 0.f, 0.f), 30.f, 8, true);
+    Planet ball(Vec3(0.f, 0.f, 0.f), 30.f, 7, true);
 
     while (window.isOpen())
     {
@@ -64,12 +53,12 @@ int main(int argc, char** argv)
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // glMatrixMode(GL_MODELVIEW);
-        // glLoadIdentity();
-        // glTranslatef(0.f, 0.f, -220.f);
-        // glRotatef(angle*50.f, 0.f, 1.f, 0.f);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        glTranslatef(0.f, 0.f, -100.f);
+        glRotatef(angle*50.f, 0.f, 1.f, 0.f);
 
-        oglGraphics.updateCamera(120, angle,  0.1f);
+        // oglGraphics.updateCamera(120, angle,  0.1f);
 
         // glBegin(GL_TRIANGLES);
         // glColor3f(1.f, 0.2f, 0.25f);

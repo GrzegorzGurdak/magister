@@ -37,6 +37,7 @@ else()
 endif()
 
 find_package(OpenGL REQUIRED)
+find_package(OpenMP REQUIRED)
 find_package(SFML CONFIG REQUIRED COMPONENTS Graphics Window System)
 
 # Auto-pick all project source files, e.g. src/MVec.cpp

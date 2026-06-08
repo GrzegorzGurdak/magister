@@ -27,6 +27,17 @@
         "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++"
       }
+    },
+    {
+      "name": "gcc-release",
+      "displayName": "GCC Release",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build/gcc-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
     }
   ],
   "buildPresets": [
@@ -37,6 +48,10 @@
     {
       "name": "build-clang",
       "configurePreset": "clang-debug"
+    },
+    {
+      "name": "build-gcc-release",
+      "configurePreset": "gcc-release"
     }
   ]
 }
