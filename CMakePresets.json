@@ -13,19 +13,9 @@
       "binaryDir": "${sourceDir}/build/gcc-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER": "gcc",
-        "CMAKE_CXX_COMPILER": "g++"
-      }
-    },
-    {
-      "name": "clang-debug",
-      "displayName": "Clang Debug",
-      "generator": "MinGW Makefiles",
-      "binaryDir": "${sourceDir}/build/clang-debug",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++"
+        "CMAKE_C_COMPILER": "C:/msys64/mingw64/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:/msys64/mingw64/bin/g++.exe",
+        "CMAKE_PREFIX_PATH": "C:/msys64/mingw64"
       }
     },
     {
@@ -35,8 +25,33 @@
       "binaryDir": "${sourceDir}/build/gcc-release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_C_COMPILER": "gcc",
-        "CMAKE_CXX_COMPILER": "g++"
+        "CMAKE_C_COMPILER": "C:/msys64/mingw64/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "C:/msys64/mingw64/bin/g++.exe",
+        "CMAKE_PREFIX_PATH": "C:/msys64/mingw64"
+      }
+    },
+    {
+      "name": "clang-debug",
+      "displayName": "Clang Debug",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build/clang-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "C:/msys64/mingw64/bin/clang.exe",
+        "CMAKE_CXX_COMPILER": "C:/msys64/mingw64/bin/clang++.exe",
+        "CMAKE_PREFIX_PATH": "C:/msys64/mingw64"
+      }
+    },
+    {
+      "name": "clang-release",
+      "displayName": "Clang Release",
+      "generator": "MinGW Makefiles",
+      "binaryDir": "${sourceDir}/build/clang-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "C:/msys64/mingw64/bin/clang.exe",
+        "CMAKE_CXX_COMPILER": "C:/msys64/mingw64/bin/clang++.exe",
+        "CMAKE_PREFIX_PATH": "C:/msys64/mingw64"
       }
     }
   ],
@@ -52,6 +67,10 @@
     {
       "name": "build-gcc-release",
       "configurePreset": "gcc-release"
+    },
+    {
+      "name": "build-clang-release",
+      "configurePreset": "clang-release"
     }
   ]
 }

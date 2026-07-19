@@ -38,6 +38,7 @@ endif()
 
 find_package(OpenGL REQUIRED)
 find_package(OpenMP REQUIRED)
+# find_package(GLUT REQUIRED)
 find_package(SFML CONFIG REQUIRED COMPONENTS Graphics Window System)
 
 # Auto-pick all project source files, e.g. src/MVec.cpp
@@ -62,3 +63,9 @@ if(WIN32)
 		COMMAND_EXPAND_LISTS
 	)
 endif()
+
+add_custom_command(TARGET sfml_example POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy_directory
+		"${CMAKE_CURRENT_SOURCE_DIR}/fonts"
+		$<TARGET_FILE_DIR:sfml_example>/fonts
+)

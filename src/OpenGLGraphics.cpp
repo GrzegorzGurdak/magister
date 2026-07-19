@@ -1,13 +1,13 @@
 #include "OpenGLGraphics.hpp"
 #include <SFML/OpenGL.hpp>
 #include <gl/glu.h>
-// #include <GL/glut.h>  // Uncomment when GLUT is available
+#include <GL/glut.h>  // Uncomment when GLUT is available
 
 void OpenGLGraphics::initOpenGL(int argc, char** argv) {
     glClearColor(1.f, 1.f, 1.f, 0.f);
 	glEnable(GL_DEPTH_TEST);
 	glDepthMask(GL_TRUE);
-	// glutInit(&argc, argv);  // Uncomment when GLUT is available
+	glutInit(&argc, argv);  // Uncomment when GLUT is available
     setCamera();
     enableLight();
 }

@@ -4,8 +4,11 @@
 #include <SFML/OpenGL.hpp>
 
 #include "OpenGLGraphics.hpp"
+#include "GUI_elements.hpp"
 #include "MVec.hpp"
 #include "planet.hpp"
+
+#include "PhysicSolver3d.hpp"
 
 int main(int argc, char** argv)
 {
@@ -16,7 +19,7 @@ int main(int argc, char** argv)
     OpenGLGraphics oglGraphics(900, 1.5f, 0);
 
     sf::RenderWindow window(sf::VideoMode({1200, 900}), "SFML 3 + CMake");
-    window.setFramerateLimit(30);
+    window.setFramerateLimit(60);
 
     if (!window.setActive(true))
     {
@@ -27,10 +30,46 @@ int main(int argc, char** argv)
 	oglGraphics.reshapeScreen(window.getSize());
     oglGraphics.initOpenGL(argc, argv);
 
-
     float angle = 0.f;
 
-    Planet ball(Vec3(0.f, 0.f, 0.f), 30.f, 7, true);
+    Planet ball(Vec3(0.f, 0.f, 0.f), 30.f, 5, true);
+
+    sf::Font font;
+	if (!font.openFromFile("fonts/arial.ttf")) {
+		std::cerr << "Failed to load fonts/arial.ttf" << std::endl;
+		return 1;
+	}
+
+    StatElement statElement(font);
+
+    PhysicSolver3d sandbox(ChunkGrid3d(10, window.getSize().x, window.getSize().y, 300));
+	PhysicDrawer3d sandbox_draw(sandbox);
+
+    // acceleration function: to the center of Vec3(0,0,0)
+    sandbox.set_acceleration([](PhysicBody3d* obj, std::vector<PhysicBody3d*>& objs) -> Vec3 {
+        Vec3 center(0.f, 0.f, 0.f);
+        Vec3 dir = center - obj->getPos();
+        float dist = dir.length();
+        if (dist < 1.f) dist = 1.f;
+        return dir.normal() * (100.f / (dist * dist)); //inverse square law
+    });
+    // sandbox.set_acceleration(Vec3(0,10,0));
+    sandbox.set_constraints_def();
+
+    PhysicBody3d* controlObj;
+
+    for(int i = 0; i < 100; i++)
+    {
+        PhysicBody3d* obj = new PhysicBody3d(
+            Vec3::random_rad(50.f),
+            1.f,
+            sf::Color(rand() % 256, rand() % 256, rand() % 256)
+        );
+        sandbox.add(obj);
+        controlObj = obj; //last added object will be for debug
+    }
+
+    long long timeResults[7] = { 0, 0, 0, 0, 0, 0, 0 };
 
     while (window.isOpen())
     {
@@ -55,23 +94,20 @@ int main(int argc, char** argv)
 
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
-        glTranslatef(0.f, 0.f, -100.f);
+        glTranslatef(0.f, 0.f, -200.f);
         glRotatef(angle*50.f, 0.f, 1.f, 0.f);
 
-        // oglGraphics.updateCamera(120, angle,  0.1f);
+        sandbox.update(timeResults, 1 / 30.f, 8);
+        statElement.update();
 
-        // glBegin(GL_TRIANGLES);
-        // glColor3f(1.f, 0.2f, 0.25f);
-        // glVertex3f(-70.f, -60.f, 0.f);
+        std::cout << controlObj->getPos() << "\n";
 
-        // glColor3f(0.2f, 1.f, 0.4f);
-        // glVertex3f(70.f, -60.f, 0.f);
-
-        // glColor3f(0.3f, 0.5f, 1.f);
-        // glVertex3f(0.f, 70.f, 0.f);
-        // glEnd();
-
+        window.draw(sandbox_draw);
         window.draw(ball);
+
+        window.pushGLStates();
+		window.draw(statElement);
+		window.popGLStates();
 
         angle += 0.002f;
         if (angle >= M_PIF * 2.f)

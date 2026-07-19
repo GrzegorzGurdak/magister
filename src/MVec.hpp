@@ -88,6 +88,12 @@ struct Vec3
 
     float length() const { return sqrt(x*x + y*y + z*z); };
 
+    Vec3 normal() const {
+        float len = length();
+        if (len == 0.f) return Vec3(0.f, 0.f, 0.f);
+        return Vec3(x / len, y / len, z / len);
+    }
+
     static const Vec3 nullV;
     static const Vec3 UP;
     static const Vec3 DOWN;
