@@ -32,7 +32,7 @@ int main(int argc, char** argv)
 
     float angle = 0.f;
 
-    Planet ball(Vec3(0.f, 0.f, 0.f), 30.f, 4, true);
+    Planet ball(Vec3(0.f, 0.f, 0.f), 30.f, 5, true);
 
     sf::Font font;
 	if (!font.openFromFile("fonts/arial.ttf")) {
@@ -59,7 +59,7 @@ int main(int argc, char** argv)
 
     //PhysicBody3d* controlObj;
 
-    for(int i = 0; i < 300; i++)
+    for(int i = 0; i < 1000; i++)
     {
         PhysicBody3d* obj = new PhysicBody3d(
             Vec3::random_rad(60.f, 100.f),

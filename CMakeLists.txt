@@ -26,17 +26,24 @@ endif()
 
 set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 
-# Try to find GLUT on the system first
-find_package(GLUT QUIET)
-
-# If found, use it; otherwise skip (GLUT is optional - modern OpenGL doesn't require it)
-if(GLUT_FOUND)
-	message(STATUS "Found system GLUT: ${GLUT_LIBRARIES}")
+# The code calls glutInit/glutSolidSphere unconditionally (Sphere.hpp, main.cpp),
+# so GLUT is a hard requirement, not optional window dressing.
+# MSYS2/MinGW ships freeglut with its own CMake config (imported target
+# FreeGLUT::freeglut) rather than the legacy FindGLUT.cmake module's
+# GLUT_INCLUDE_DIR/GLUT_LIBRARIES variables, so try that first and fall back
+# to the classic module for other toolchains (e.g. system-installed GLUT).
+find_package(FreeGLUT CONFIG QUIET)
+if(TARGET FreeGLUT::freeglut)
+	message(STATUS "Found FreeGLUT (config package): using imported target FreeGLUT::freeglut")
 else()
-	message(STATUS "GLUT not found on system - GLUT/GLU features will not be available")
-	# To add GLUT support: install freeglut-devel or build freeglut and set up CMAKE_PREFIX_PATH
-	set(GLUT_INCLUDE_DIR "")
-	set(GLUT_LIBRARIES "")
+	find_package(GLUT QUIET)
+	if(GLUT_FOUND)
+		message(STATUS "Found system GLUT: ${GLUT_LIBRARIES}")
+	else()
+		message(STATUS "GLUT not found on system - GLUT/GLU features will not be available")
+		set(GLUT_INCLUDE_DIR "")
+		set(GLUT_LIBRARIES "")
+	endif()
 endif()
 
 find_package(OpenGL REQUIRED)
@@ -48,12 +55,16 @@ find_package(SFML CONFIG REQUIRED COMPONENTS Graphics Window System)
 file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 
 add_executable(sfml_example ${APP_SOURCES})
-if(GLUT_INCLUDE_DIR)
-	target_include_directories(sfml_example PRIVATE ${GLUT_INCLUDE_DIR})
-endif()
 target_link_libraries(sfml_example PRIVATE SFML::Graphics SFML::Window SFML::System OpenGL::GL)
-if(GLUT_LIBRARIES)
-	target_link_libraries(sfml_example PRIVATE ${GLUT_LIBRARIES})
+if(TARGET FreeGLUT::freeglut)
+	target_link_libraries(sfml_example PRIVATE FreeGLUT::freeglut)
+else()
+	if(GLUT_INCLUDE_DIR)
+		target_include_directories(sfml_example PRIVATE ${GLUT_INCLUDE_DIR})
+	endif()
+	if(GLUT_LIBRARIES)
+		target_link_libraries(sfml_example PRIVATE ${GLUT_LIBRARIES})
+	endif()
 endif()
 if(WIN32)
 	target_link_libraries(sfml_example PRIVATE opengl32 glu32)

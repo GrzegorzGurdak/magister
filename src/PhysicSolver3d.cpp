@@ -413,7 +413,8 @@ void PhysicSolver3d::update(long long (&simResult)[7], const float dtime, const 
         end = std::chrono::steady_clock::now();
         simResult[4] += std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
         begin = std::chrono::steady_clock::now();
-        update_planet_collision();
+        //update_planet_collision();//brute-force: every particle vs every surface triangle
+        update_planet_collision_heightfield();//baked theta/phi surface-radius lookup
         end = std::chrono::steady_clock::now();
         simResult[6] += std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
         begin = std::chrono::steady_clock::now();
@@ -516,6 +517,41 @@ void PhysicSolver3d::update_planet_collision() {
         for (const auto& correction : corrections) {
             correction.body->current_position += correction.delta;
         }
+    }
+}
+
+void PhysicSolver3d::update_planet_collision_heightfield() {
+    if (!planet || !planetHeightField || objects.empty()) {
+        return;
+    }
+
+    const Vec3 center = planet->getPosition();
+
+    // Each particle only ever touches its own current_position here (there's no
+    // pairwise interaction like in accumulate_collision_pair), so unlike the
+    // triangle-brute-force path this can write directly without deferred
+    // corrections - splitting by particle is race-free.
+    #pragma omp parallel for schedule(static)
+    for (int idx = 0; idx < static_cast<int>(objects.size()); ++idx) {
+        PhysicBody3d* body = objects[idx];
+        if (!body->isKinematic) {
+            continue;
+        }
+
+        const Vec3 toBody = body->getPos() - center;
+        const float dist = toBody.length();
+        if (dist <= std::numeric_limits<float>::epsilon()) {
+            continue;
+        }
+
+        const float surfaceRadius = planetHeightField->surfaceRadiusAt(toBody);
+        const float minDist = surfaceRadius + body->getRadius();
+        if (dist >= minDist) {
+            continue;
+        }
+
+        const float overlap = minDist - dist;
+        body->current_position += (toBody / dist) * (overlap * 0.5f);
     }
 }
 

@@ -5,6 +5,7 @@
 #include <vector>
 #include <algorithm>
 #include <functional>
+#include <memory>
 #include <SFML/Graphics.hpp>
 
 
@@ -114,7 +115,12 @@ protected:
 
 class PhysicSolver3d{
 public:
-    PhysicSolver3d(ChunkGrid3d g, const Planet* planet = nullptr) : grid { g }, planet{ planet } {}
+    // thetaHeightSamples/phiHeightSamples size the SphereHeightField baked for
+    // update_planet_collision_heightfield(); ignored if planet is null.
+    PhysicSolver3d(ChunkGrid3d g, const Planet* planet = nullptr, int thetaHeightSamples = 128*4, int phiHeightSamples = 256*4)
+        : grid{ std::move(g) }, planet{ planet },
+          planetHeightField{ planet ? std::make_unique<SphereHeightField>(*planet, thetaHeightSamples, phiHeightSamples) : nullptr }
+    {}
     ~PhysicSolver3d() {
         for (auto& i : objects) { delete(i); }
         for (auto& i : links) { delete(i); }
@@ -131,6 +137,7 @@ public:
     void update_constraints();
     void update_collision();
     void update_planet_collision();
+    void update_planet_collision_heightfield();
     void update_links() {
         for (auto& i : links)
         {
@@ -160,6 +167,7 @@ protected:
     std::vector<PhysicLink3d*> links{};
     ChunkGrid3d grid;
     const Planet* planet;
+    std::unique_ptr<SphereHeightField> planetHeightField;
     friend class PhysicDrawer;
 
     enum { FUNC, NONE, VALUE, DEFAULT } acceleration_type{ NONE }, constraint_type{ DEFAULT };

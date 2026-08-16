@@ -45,6 +45,15 @@ public:
         return surfaceTriangles;
     }
 
+    Vec3 getPosition() const { return position; }
+
+    // Surface radius (base radius + terrain offset) along a given direction from
+    // center, without building/walking the mesh - the primitive a height-field bake
+    // samples over a theta/phi grid instead of scanning triangles.
+    float surfaceRadiusFor(const Vec3& direction) const {
+        return radius + radiusOffsetForVertex(normalize(direction));
+    }
+
     void draw(sf::RenderTarget& target, sf::RenderStates states) const override{
         (void)target;
         (void)states;
@@ -306,6 +315,76 @@ private:
 
     mutable std::vector<Triangle3d> surfaceTriangles;
     mutable bool surfaceCacheDirty = true;
+};
+
+// Alternate collision acceleration structure for a Sphere's surface: instead of
+// scanning triangles, bake the surface radius on a theta/phi grid once up front,
+// then resolve a particle's collision with a single bilinear-interpolated lookup
+// by direction from center. Trades the mesh's exact geometry for O(1) queries -
+// good when there are far more particles than there is time to brute-force them
+// against a triangle list every step.
+class SphereHeightField
+{
+public:
+    SphereHeightField(const Sphere& sphere, int thetaSamples, int phiSamples)
+        : thetaSamples{ std::max(2, thetaSamples) }, phiSamples{ std::max(3, phiSamples) }
+    {
+        radii.resize(static_cast<size_t>(this->thetaSamples) * this->phiSamples);
+
+        #pragma omp parallel for schedule(static)
+        for (int ti = 0; ti < this->thetaSamples; ++ti)
+        {
+            const float theta = M_PIF * ti / (this->thetaSamples - 1); // [0, pi], pole to pole
+            const float sinTheta = std::sin(theta);
+            const float cosTheta = std::cos(theta);
+            for (int pi = 0; pi < this->phiSamples; ++pi)
+            {
+                const float phi = 2.f * M_PIF * pi / this->phiSamples; // [0, 2pi)
+                const Vec3 dir(sinTheta * std::cos(phi), cosTheta, sinTheta * std::sin(phi));
+                radii[static_cast<size_t>(ti) * this->phiSamples + pi] = sphere.surfaceRadiusFor(dir);
+            }
+        }
+    }
+
+    // direction need not be normalized or in world space relative to the sphere's
+    // center - caller passes (particlePos - sphere.getPosition()).
+    float surfaceRadiusAt(const Vec3& direction) const
+    {
+        const float len = std::sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+        if (len <= 0.f)
+            return 0.f;
+        const float nx = direction.x / len, ny = direction.y / len, nz = direction.z / len;
+
+        const float theta = std::acos(std::clamp(ny, -1.f, 1.f));
+        float phi = std::atan2(nz, nx);
+        if (phi < 0.f)
+            phi += 2.f * M_PIF;
+
+        const float tf = theta / M_PIF * (thetaSamples - 1);
+        const float pf = phi / (2.f * M_PIF) * phiSamples;
+
+        const int t0 = std::clamp(static_cast<int>(tf), 0, thetaSamples - 1);
+        const int t1 = std::clamp(t0 + 1, 0, thetaSamples - 1);
+        const float tFrac = tf - t0;
+
+        const int p0 = static_cast<int>(pf) % phiSamples;
+        const int p1 = (p0 + 1) % phiSamples;
+        const float pFrac = pf - std::floor(pf);
+
+        const float r00 = radii[static_cast<size_t>(t0) * phiSamples + p0];
+        const float r01 = radii[static_cast<size_t>(t0) * phiSamples + p1];
+        const float r10 = radii[static_cast<size_t>(t1) * phiSamples + p0];
+        const float r11 = radii[static_cast<size_t>(t1) * phiSamples + p1];
+
+        const float r0 = r00 + (r01 - r00) * pFrac;
+        const float r1 = r10 + (r11 - r10) * pFrac;
+        return r0 + (r1 - r0) * tFrac;
+    }
+
+private:
+    int thetaSamples;
+    int phiSamples;
+    std::vector<float> radii; // row-major: theta-major, phi-minor
 };
 
 #endif // SPHERE_HPP
