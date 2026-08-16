@@ -18,7 +18,7 @@ struct PhysicBody3d
 
 	void update_position(const float dtime) {
 		if (isKinematic) {
-			const Vec3 velocity = current_position - old_position; // velocity [/dtime]
+			const Vec3 velocity = (current_position - old_position) * 0.999; // velocity [/dtime]
 			old_position = current_position;
 			current_position += velocity + acceleration * dtime * dtime; //verlet
 		}acceleration = 0;

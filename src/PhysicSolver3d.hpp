@@ -58,7 +58,7 @@ struct Chunk3d{
 
 class ChunkGrid3d {
 public:
-    ChunkGrid3d(int cS, int wW, int wH, int wD);
+    ChunkGrid3d(int cS, Vec3 beginning, Vec3 end);
 
     void assignGrid(std::vector<PhysicBody3d*>& obj);
     void updateChunkSize(PhysicBody3d* obj);
@@ -81,6 +81,8 @@ public:
 
 protected:
     std::vector<Chunk3d> grid;
+    Vec3 beginning;
+    Vec3 end;
     int cellSize;
     int grid_width;
     int grid_height;

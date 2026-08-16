@@ -1,14 +1,64 @@
 #include "PhysicSolver3d.hpp"
 #include <chrono>
+#include <omp.h>
+#include <limits>
+#include <thread>
+
+namespace {
+struct CollisionCorrection {
+    PhysicBody3d* body;
+    Vec3 delta;
+};
+
+inline void accumulate_collision_pair(PhysicBody3d* first, PhysicBody3d* second, std::vector<CollisionCorrection>& corrections) {
+    if (first == second) {
+        return;
+    }
+
+    if (!first->isKinematic && !second->isKinematic) {
+        return;
+    }
+
+    Vec3 diff = first->getPos() - second->getPos();
+    float diffLen = diff.length();
+    if (diffLen <= std::numeric_limits<float>::epsilon()) {
+        diff = Vec3{ 1.f, 0.f, 0.f };
+        diffLen = 1.f;
+    }
+
+    float overlap = (first->getRadius() + second->getRadius()) - diffLen;
+    if (overlap <= 0.f) {
+        return;
+    }
+
+    Vec3 correction = diff / diffLen * (overlap * 0.25f);
+    if (first->isKinematic) {
+        corrections.push_back({ first, correction });
+    }
+    if (second->isKinematic) {
+        corrections.push_back({ second, correction * -1.f });
+    }
+}
+}
 
 ////ChunkGrid:
 
-ChunkGrid3d::ChunkGrid3d(int cS, int wW, int wH, int wD) :
-    cellSize{ cS }, grid_width{ wW / cS }, grid_height{ wH / cS }, grid_depth{ wD/cS }, window_width{wW}, window_height{ wH }, window_depth{ wD }
+ChunkGrid3d::ChunkGrid3d(int cS, Vec3 beginning, Vec3 end) :
+    cellSize{ cS },
+    beginning{ beginning }, end{ end },
+    window_width{int(end.x - beginning.x)}, window_height{ int(end.y - beginning.y) }, window_depth{ int(end.z - beginning.z) },
+    grid_width{ int((end.x - beginning.x) / cS) }, grid_height{ int((end.y - beginning.y) / cS) }, grid_depth{ int((end.z - beginning.z)/cS) }
 {
     // int gW = wW / cS;
     // int gH = wH / cS;
     grid = std::vector<Chunk3d>(grid_width * grid_height * grid_depth);
+    std::cout << "ChunkGrid3d created: " << grid_width << "x" << grid_height << "x" << grid_depth << ", total: " << grid.size() << std::endl;
+    //check if pragma omp is available
+    #ifdef _OPENMP
+        std::cout << "OpenMP is available, max threads: " << omp_get_max_threads() << std::endl;
+    #else
+        std::cout << "OpenMP is not available" << std::endl;
+    #endif
 }
 
 void ChunkGrid3d::assignGrid(std::vector<PhysicBody3d*>& obj) {
@@ -17,11 +67,14 @@ void ChunkGrid3d::assignGrid(std::vector<PhysicBody3d*>& obj) {
     }
 
     for (auto& i : obj) {
-        int x = int(i->getPos().x / cellSize);
-        int y = int(i->getPos().y / cellSize);
-        int z = int(i->getPos().z / cellSize);
+        int x = int((i->getPos().x - beginning.x) / cellSize);
+        int y = int((i->getPos().y - beginning.y) / cellSize);
+        int z = int((i->getPos().z - beginning.z) / cellSize);
         if (0 <= x && x < grid_width && 0 <= y && y < grid_height && 0 <= z && z < grid_depth)
             grid.at(array_index(x,y,z)).push_back(i);
+        else {
+            std::cout << "Object out of bounds: " << i->getPos().x << ", " << i->getPos().y << ", " << i->getPos().z << std::endl;
+        }
     }
 }
 
@@ -44,7 +97,18 @@ void ChunkGrid3d::update_collision() {
                     for (int i{ -1 }; i < 2; i++)
                         for (int j{ -1 }; j < 2; j++)
                             for (int k{ -1 }; k < 2; k++) {
-                                auto& neigh_cell = grid.at(array_index(x + i, y + j, z + k));
+                                if (k < 0 || (k == 0 && j < 0) || (k == 0 && j == 0 && i <= 0)) {
+                                    continue;
+                                }
+
+                                const int nx = x + i;
+                                const int ny = y + j;
+                                const int nz = z + k;
+                                if (nx < 1 || nx >= grid_width - 1 || ny < 1 || ny >= grid_height - 1 || nz < 1 || nz >= grid_depth - 1) {
+                                    continue;
+                                }
+
+                                auto& neigh_cell = grid.at(array_index(nx, ny, nz));
                                 if (neigh_cell.size != 0)
                                     solve_collision(cell, neigh_cell);
                             }
@@ -53,47 +117,110 @@ void ChunkGrid3d::update_collision() {
 }
 
 void ChunkGrid3d::update_collision_mt() {
-    // int split_num = 8;
-    // #pragma omp parallel for
-    // for (int t = 0; t < split_num; t++) {
+    if (collision_type != DEFAULT) {
+        update_collision();
+        return;
+    }
 
-    //     int b{ 1 + t * grid_width / split_num };
-    //     int e{ ((t * 2 + 1) * grid_width - 1) / split_num / 2 + 1 };
+    if (grid_width < 3 || grid_height < 3 || grid_depth < 3) {
+        return;
+    }
 
-    //     for (int x{ 1 + t*grid_width/split_num}; x < ((t * 2 + 1)* grid_width - 1) / split_num/2 + 1; x++) {
-    //         if (x == grid_width - 1) break;
-    //         for (int y{ 1 }; y < grid_height - 1; y++) {
-    //             Chunk& cell = grid.at(x + y * grid_width);
-    //             if (cell.size != 0)
-    //                 for (int i{ -1 }; i < 2; i++)
-    //                     for (int j{ -1 }; j < 2; j++) {
-    //                         auto& neigh_cell = grid.at(x + i + (y+j) * grid_width);
-    //                         if (neigh_cell.size != 0)
-    //                             solve_collision(cell, neigh_cell);
-    //                     }
-    //         }
-    //     }
-    // }
-    // #pragma omp parallel for
-    // for (int t = 0; t < split_num; t++) {
+    constexpr int worker_count = 16;
+    const int interior_width = grid_width - 2;
+    const int thread_count = std::min(worker_count, interior_width);
 
-    //     int b{ ((t * 2 + 1) * grid_width - 1) / split_num / 2 + 1 };
-    //     int e{ ((t + 1) * grid_width - 1) / split_num + 1 };
+    if (thread_count <= 0) {
+        return;
+    }
 
-    //     for (int x{ ((t * 2 + 1) * grid_width - 1) / split_num / 2 + 1 }; x < ((t + 1) * grid_width - 1) / split_num + 1; x++) {
-    //         if (x == grid_width - 1) break;
-    //         for (int y{ 1 }; y < grid_height - 1; y++) {
-    //             Chunk& cell = grid.at(x + y * grid_width);
-    //             if (cell.size != 0)
-    //                 for (int i{ -1 }; i < 2; i++)
-    //                     for (int j{ -1 }; j < 2; j++) {
-    //                         auto& neigh_cell = grid.at(x + i + (y+j) * grid_width);
-    //                         if (neigh_cell.size != 0)
-    //                             solve_collision(cell, neigh_cell);
-    //                     }
-    //         }
-    //     }
-    // }
+    struct XRange {
+        int begin;
+        int end;
+    };
+
+    std::vector<XRange> ranges;
+    ranges.reserve(thread_count);
+
+    const int base_width = interior_width / thread_count;
+    const int remainder = interior_width % thread_count;
+
+    int current_x = 1;
+    for (int thread_index = 0; thread_index < thread_count; ++thread_index) {
+        const int slice_width = base_width + (thread_index < remainder ? 1 : 0);
+        ranges.push_back({ current_x, current_x + slice_width });
+        current_x += slice_width;
+    }
+
+    std::vector<std::vector<CollisionCorrection>> thread_corrections(thread_count);
+    std::vector<std::thread> workers;
+    workers.reserve(thread_count);
+
+    for (int thread_index = 0; thread_index < thread_count; ++thread_index) {
+        workers.emplace_back([this, &ranges, &thread_corrections, thread_index]() {
+            std::vector<CollisionCorrection>& corrections = thread_corrections[thread_index];
+            const int x_begin = ranges[thread_index].begin;
+            const int x_end = ranges[thread_index].end;
+
+            for (int x = x_begin; x < x_end; ++x) {
+                for (int y = 1; y < grid_height - 1; ++y) {
+                    for (int z = 1; z < grid_depth - 1; ++z) {
+                        Chunk3d& cell = grid.at(array_index(x, y, z));
+                        if (cell.size == 0) {
+                            continue;
+                        }
+
+                        for (int first_index = 0; first_index < cell.size; ++first_index) {
+                            PhysicBody3d* first = cell[first_index];
+                            for (int second_index = first_index + 1; second_index < cell.size; ++second_index) {
+                                accumulate_collision_pair(first, cell[second_index], corrections);
+                            }
+                        }
+
+                        for (int dx = -1; dx <= 1; ++dx) {
+                            for (int dy = -1; dy <= 1; ++dy) {
+                                for (int dz = -1; dz <= 1; ++dz) {
+                                    if (dz < 0 || (dz == 0 && dy < 0) || (dz == 0 && dy == 0 && dx <= 0)) {
+                                        continue;
+                                    }
+
+                                    const int nx = x + dx;
+                                    const int ny = y + dy;
+                                    const int nz = z + dz;
+
+                                    if (nx < 1 || nx >= grid_width - 1 || ny < 1 || ny >= grid_height - 1 || nz < 1 || nz >= grid_depth - 1) {
+                                        continue;
+                                    }
+
+                                    Chunk3d& neighbor = grid.at(array_index(nx, ny, nz));
+                                    if (neighbor.size == 0) {
+                                        continue;
+                                    }
+
+                                    for (int first_index = 0; first_index < cell.size; ++first_index) {
+                                        PhysicBody3d* first = cell[first_index];
+                                        for (int second_index = 0; second_index < neighbor.size; ++second_index) {
+                                            accumulate_collision_pair(first, neighbor[second_index], corrections);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    for (auto& worker : workers) {
+        worker.join();
+    }
+
+    for (const auto& corrections : thread_corrections) {
+        for (const auto& correction : corrections) {
+            correction.body->current_position += correction.delta;
+        }
+    }
 }
 
 void ChunkGrid3d::solve_collision(Chunk3d& central_chunk, Chunk3d& neighboring_chunk) {
@@ -159,9 +286,10 @@ void PhysicSolver3d::update(long long (&simResult)[7], const float dtime, const 
         end = std::chrono::steady_clock::now();
         simResult[3] += std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
         begin = std::chrono::steady_clock::now();
-        update_collision();
+        //update_collision();
+        //update_collision();
         //grid.update_collision();
-        //grid.update_collision_mt();//multi_thread
+        grid.update_collision_mt();//multi_thread
         end = std::chrono::steady_clock::now();
         simResult[4] += std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
         begin = std::chrono::steady_clock::now();
@@ -196,6 +324,9 @@ void PhysicSolver3d::update_constraints() {
                 float diffLen = diff.length();
                 if (diffLen + i->radius > radius) {
                     i->current_position -= diff / diffLen * (diffLen + i->radius - radius);
+                }
+                else if (diffLen < 1) {
+                    i->current_position = diff.normal() * (1 + i->radius);
                 }
             }
         }
@@ -271,6 +402,8 @@ std::pair<bool, PhysicBody3d*> PhysicSolver3d::get_from_position(const Vec3& cor
 //PhysicDrawer:
 
 void PhysicDrawer3d::draw(sf::RenderTarget& target, sf::RenderStates states) const {
+    (void)target;
+    (void)states;
     // // for (const auto& i : physicSolver.objects)
     // // {
     // //     target.draw(i->getFigure(), states);

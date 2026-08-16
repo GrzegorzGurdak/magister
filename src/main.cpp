@@ -42,14 +42,14 @@ int main(int argc, char** argv)
 
     StatElement statElement(font);
 
-    PhysicSolver3d sandbox(ChunkGrid3d(10, window.getSize().x, window.getSize().y, 300));
+    PhysicSolver3d sandbox(ChunkGrid3d(4, Vec3(-200.f, -200.f, -200.f), Vec3(200.f, 200.f, 200.f)));
 	PhysicDrawer3d sandbox_draw(sandbox);
 
     // acceleration function: to the center of Vec3(0,0,0)
     sandbox.set_acceleration([](PhysicBody3d* obj, std::vector<PhysicBody3d*>& objs) -> Vec3 {
         Vec3 center(0.f, 0.f, 0.f);
         Vec3 dir = center - obj->getPos();
-        float dist = dir.length();
+        float dist = dir.length()/10;
         if (dist < 1.f) dist = 1.f;
         return dir.normal() * (100.f / (dist * dist)); //inverse square law
     });
@@ -58,11 +58,11 @@ int main(int argc, char** argv)
 
     PhysicBody3d* controlObj;
 
-    for(int i = 0; i < 100; i++)
+    for(int i = 0; i < 1000; i++)
     {
         PhysicBody3d* obj = new PhysicBody3d(
-            Vec3::random_rad(50.f),
-            1.f,
+            Vec3::random_rad(100.f),
+            2.f,
             sf::Color(rand() % 256, rand() % 256, rand() % 256)
         );
         sandbox.add(obj);
@@ -100,7 +100,7 @@ int main(int argc, char** argv)
         sandbox.update(timeResults, 1 / 30.f, 8);
         statElement.update();
 
-        std::cout << controlObj->getPos() << "\n";
+        //std::cout << controlObj->getPos() << "\n";
 
         window.draw(sandbox_draw);
         window.draw(ball);
