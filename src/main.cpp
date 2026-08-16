@@ -42,11 +42,12 @@ int main(int argc, char** argv)
 
     StatElement statElement(font);
 
-    PhysicSolver3d sandbox(ChunkGrid3d(4, Vec3(-200.f, -200.f, -200.f), Vec3(200.f, 200.f, 200.f)));
+    PhysicSolver3d sandbox(ChunkGrid3d(20.f, 2.f, Vec3(-200.f, -200.f, -200.f), Vec3(200.f, 200.f, 200.f)));
 	PhysicDrawer3d sandbox_draw(sandbox);
 
     // acceleration function: to the center of Vec3(0,0,0)
     sandbox.set_acceleration([](PhysicBody3d* obj, std::vector<PhysicBody3d*>& objs) -> Vec3 {
+        (void)objs;
         Vec3 center(0.f, 0.f, 0.f);
         Vec3 dir = center - obj->getPos();
         float dist = dir.length()/10;
@@ -56,7 +57,7 @@ int main(int argc, char** argv)
     // sandbox.set_acceleration(Vec3(0,10,0));
     sandbox.set_constraints_def();
 
-    PhysicBody3d* controlObj;
+    //PhysicBody3d* controlObj;
 
     for(int i = 0; i < 1000; i++)
     {
@@ -66,7 +67,7 @@ int main(int argc, char** argv)
             sf::Color(rand() % 256, rand() % 256, rand() % 256)
         );
         sandbox.add(obj);
-        controlObj = obj; //last added object will be for debug
+        // controlObj = obj; //last added object will be for debug
     }
 
     long long timeResults[7] = { 0, 0, 0, 0, 0, 0, 0 };

@@ -2,7 +2,6 @@
 #include <chrono>
 #include <omp.h>
 #include <limits>
-#include <thread>
 
 namespace {
 struct CollisionCorrection {
@@ -43,7 +42,7 @@ inline void accumulate_collision_pair(PhysicBody3d* first, PhysicBody3d* second,
 
 ////ChunkGrid:
 
-ChunkGrid3d::ChunkGrid3d(int cS, Vec3 beginning, Vec3 end) :
+ChunkGrid3d::ChunkGrid3d(int cS, float minParticleSize, Vec3 beginning, Vec3 end) :
     cellSize{ cS },
     beginning{ beginning }, end{ end },
     window_width{int(end.x - beginning.x)}, window_height{ int(end.y - beginning.y) }, window_depth{ int(end.z - beginning.z) },
@@ -52,6 +51,8 @@ ChunkGrid3d::ChunkGrid3d(int cS, Vec3 beginning, Vec3 end) :
     // int gW = wW / cS;
     // int gH = wH / cS;
     grid = std::vector<Chunk3d>(grid_width * grid_height * grid_depth);
+    min_particle_radius = cS / minParticleSize;
+    rebuild_pool();
     std::cout << "ChunkGrid3d created: " << grid_width << "x" << grid_height << "x" << grid_depth << ", total: " << grid.size() << std::endl;
     //check if pragma omp is available
     #ifdef _OPENMP
@@ -59,6 +60,29 @@ ChunkGrid3d::ChunkGrid3d(int cS, Vec3 beginning, Vec3 end) :
     #else
         std::cout << "OpenMP is not available" << std::endl;
     #endif
+}
+
+// Sizes `pool` so each chunk can hold as many particle-diameter spheres as could
+// plausibly fit in a cellSize^3 volume (with slack for imperfect/random packing),
+// then repoints every Chunk3d::data at its slice of the slab. Chunks stay laid out
+// in the same order as `grid`, so scanning a cell plus its neighbors (the hot path
+// in update_collision/update_collision_mt) stays close together in memory instead
+// of chasing a separate heap allocation per chunk.
+void ChunkGrid3d::rebuild_pool() {
+    const float diameter = std::max(1.f, min_particle_radius * 2.f);
+    int per_axis = static_cast<int>(std::ceil(cellSize / diameter)) + 1;
+    per_axis = std::clamp(per_axis, 1, 16);
+    per_chunk_capacity = std::clamp(per_axis * per_axis * per_axis * 2, 9, 2048);
+
+    pool.assign(static_cast<size_t>(grid.size()) * per_chunk_capacity, nullptr);
+    for (size_t i = 0; i < grid.size(); ++i) {
+        grid[i].data = &pool[i * per_chunk_capacity];
+        grid[i].capacity = per_chunk_capacity;
+        grid[i].size = 0;
+    }
+
+    std::cout << "ChunkGrid3d pool rebuilt: capacity/chunk=" << per_chunk_capacity
+        << ", pool size=" << pool.size() << std::endl;
 }
 
 void ChunkGrid3d::assignGrid(std::vector<PhysicBody3d*>& obj) {
@@ -79,12 +103,24 @@ void ChunkGrid3d::assignGrid(std::vector<PhysicBody3d*>& obj) {
 }
 
 void ChunkGrid3d::updateChunkSize(PhysicBody3d* obj) {
+    bool needs_rebuild = false;
+
     if (obj->getRadius() * 2 > cellSize) {
         cellSize = (int)ceil(obj->getRadius() * 2);
         grid_width = window_width / cellSize;
         grid_height = window_height / cellSize;
         grid_depth = window_depth / cellSize;
         grid = std::vector<Chunk3d>(grid_width*grid_height*grid_depth);
+        needs_rebuild = true;
+    }
+
+    if (obj->getRadius() < min_particle_radius) {
+        min_particle_radius = obj->getRadius();
+        needs_rebuild = true;
+    }
+
+    if (needs_rebuild) {
+        rebuild_pool();
     }
 }
 
@@ -126,9 +162,8 @@ void ChunkGrid3d::update_collision_mt() {
         return;
     }
 
-    constexpr int worker_count = 16;
     const int interior_width = grid_width - 2;
-    const int thread_count = std::min(worker_count, interior_width);
+    const int thread_count = std::min(omp_get_max_threads(), interior_width);
 
     if (thread_count <= 0) {
         return;
@@ -153,55 +188,53 @@ void ChunkGrid3d::update_collision_mt() {
     }
 
     std::vector<std::vector<CollisionCorrection>> thread_corrections(thread_count);
-    std::vector<std::thread> workers;
-    workers.reserve(thread_count);
 
-    for (int thread_index = 0; thread_index < thread_count; ++thread_index) {
-        workers.emplace_back([this, &ranges, &thread_corrections, thread_index]() {
-            std::vector<CollisionCorrection>& corrections = thread_corrections[thread_index];
-            const int x_begin = ranges[thread_index].begin;
-            const int x_end = ranges[thread_index].end;
+    #pragma omp parallel num_threads(thread_count)
+    {
+        const int thread_index = omp_get_thread_num();
+        std::vector<CollisionCorrection>& corrections = thread_corrections[thread_index];
+        const int x_begin = ranges[thread_index].begin;
+        const int x_end = ranges[thread_index].end;
 
-            for (int x = x_begin; x < x_end; ++x) {
-                for (int y = 1; y < grid_height - 1; ++y) {
-                    for (int z = 1; z < grid_depth - 1; ++z) {
-                        Chunk3d& cell = grid.at(array_index(x, y, z));
-                        if (cell.size == 0) {
-                            continue;
+        for (int x = x_begin; x < x_end; ++x) {
+            for (int y = 1; y < grid_height - 1; ++y) {
+                for (int z = 1; z < grid_depth - 1; ++z) {
+                    Chunk3d& cell = grid.at(array_index(x, y, z));
+                    if (cell.size == 0) {
+                        continue;
+                    }
+
+                    for (int first_index = 0; first_index < cell.size; ++first_index) {
+                        PhysicBody3d* first = cell[first_index];
+                        for (int second_index = first_index + 1; second_index < cell.size; ++second_index) {
+                            accumulate_collision_pair(first, cell[second_index], corrections);
                         }
+                    }
 
-                        for (int first_index = 0; first_index < cell.size; ++first_index) {
-                            PhysicBody3d* first = cell[first_index];
-                            for (int second_index = first_index + 1; second_index < cell.size; ++second_index) {
-                                accumulate_collision_pair(first, cell[second_index], corrections);
-                            }
-                        }
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        for (int dy = -1; dy <= 1; ++dy) {
+                            for (int dz = -1; dz <= 1; ++dz) {
+                                if (dz < 0 || (dz == 0 && dy < 0) || (dz == 0 && dy == 0 && dx <= 0)) {
+                                    continue;
+                                }
 
-                        for (int dx = -1; dx <= 1; ++dx) {
-                            for (int dy = -1; dy <= 1; ++dy) {
-                                for (int dz = -1; dz <= 1; ++dz) {
-                                    if (dz < 0 || (dz == 0 && dy < 0) || (dz == 0 && dy == 0 && dx <= 0)) {
-                                        continue;
-                                    }
+                                const int nx = x + dx;
+                                const int ny = y + dy;
+                                const int nz = z + dz;
 
-                                    const int nx = x + dx;
-                                    const int ny = y + dy;
-                                    const int nz = z + dz;
+                                if (nx < 1 || nx >= grid_width - 1 || ny < 1 || ny >= grid_height - 1 || nz < 1 || nz >= grid_depth - 1) {
+                                    continue;
+                                }
 
-                                    if (nx < 1 || nx >= grid_width - 1 || ny < 1 || ny >= grid_height - 1 || nz < 1 || nz >= grid_depth - 1) {
-                                        continue;
-                                    }
+                                Chunk3d& neighbor = grid.at(array_index(nx, ny, nz));
+                                if (neighbor.size == 0) {
+                                    continue;
+                                }
 
-                                    Chunk3d& neighbor = grid.at(array_index(nx, ny, nz));
-                                    if (neighbor.size == 0) {
-                                        continue;
-                                    }
-
-                                    for (int first_index = 0; first_index < cell.size; ++first_index) {
-                                        PhysicBody3d* first = cell[first_index];
-                                        for (int second_index = 0; second_index < neighbor.size; ++second_index) {
-                                            accumulate_collision_pair(first, neighbor[second_index], corrections);
-                                        }
+                                for (int first_index = 0; first_index < cell.size; ++first_index) {
+                                    PhysicBody3d* first = cell[first_index];
+                                    for (int second_index = 0; second_index < neighbor.size; ++second_index) {
+                                        accumulate_collision_pair(first, neighbor[second_index], corrections);
                                     }
                                 }
                             }
@@ -209,11 +242,7 @@ void ChunkGrid3d::update_collision_mt() {
                     }
                 }
             }
-        });
-    }
-
-    for (auto& worker : workers) {
-        worker.join();
+        }
     }
 
     for (const auto& corrections : thread_corrections) {

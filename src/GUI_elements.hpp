@@ -50,17 +50,17 @@ private:
 	sf::Clock fClock;
 
 	unsigned int FPS = 0, frame_counter = 0;
-	int simTimeValue{}, frame_count{};
+	int simTimeValue{};//, frame_count{};
 
 	sf::Text objectAmountText;
 	sf::Text simTime;
 	sf::Text fps_text;
 
-	bool isLMBPressed = false;
-	bool isRMBPressed = false;
-	bool isShiftPressed = false;
-	bool isSpacePressed = false;
-	bool isCtrlPressed = false;
+	// bool isLMBPressed = false;
+	// bool isRMBPressed = false;
+	// bool isShiftPressed = false;
+	// bool isSpacePressed = false;
+	// bool isCtrlPressed = false;
 };
 
 

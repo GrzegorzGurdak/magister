@@ -17,17 +17,21 @@
 
 #include <omp.h>
 
-constexpr int chunkCapacity = 9;
-
+// Points into ChunkGrid3d::pool, a single contiguous slab shared by every chunk
+// (laid out in the same x-fastest order as the grid) instead of each chunk owning
+// its own heap allocation. Keeps neighbor-chunk traversal cache-friendly and lets
+// per-chunk capacity be sized at runtime from cellSize/particle radius.
 struct Chunk3d{
-    PhysicBody3d* objects[chunkCapacity];
-    uint8_t size{ 0 };
+    PhysicBody3d** data{ nullptr };
+    int capacity{ 0 };
+    int size{ 0 };
+
     inline void push_back(PhysicBody3d* obj) {
-        if(size == chunkCapacity){
+        if (size >= capacity) {
             // std::cout << "Chunk is full" << std::endl;
             return;
         }
-        objects[size] = obj;
+        data[size] = obj;
         size++;
     }
 
@@ -36,29 +40,29 @@ struct Chunk3d{
     }
 
     PhysicBody3d* operator[](int i) {
-        return objects[i];
+        return data[i];
     }
     const PhysicBody3d* operator[](int i) const {
-        return objects[i];
+        return data[i];
     }
 
     PhysicBody3d** begin() {
-        return objects;
+        return data;
     }
     PhysicBody3d* const * begin() const {
-        return objects;
+        return data;
     }
     PhysicBody3d** end() {
-        return objects + size;
+        return data + size;
     }
     const PhysicBody3d* const * end() const {
-        return objects + size;
+        return data + size;
     }
 };
 
 class ChunkGrid3d {
 public:
-    ChunkGrid3d(int cS, Vec3 beginning, Vec3 end);
+    ChunkGrid3d(int cS, float minParticleSize, Vec3 beginning, Vec3 end);
 
     void assignGrid(std::vector<PhysicBody3d*>& obj);
     void updateChunkSize(PhysicBody3d* obj);
@@ -81,6 +85,9 @@ public:
 
 protected:
     std::vector<Chunk3d> grid;
+    std::vector<PhysicBody3d*> pool; // backing storage for every Chunk3d::data slice
+    int per_chunk_capacity{ 0 };
+    float min_particle_radius{ 1.f };
     Vec3 beginning;
     Vec3 end;
     int cellSize;
@@ -92,6 +99,11 @@ protected:
     int window_depth;
 
     inline int array_index(int x, int y, int z) const { return x + (y + z * grid_height) * grid_width; }
+
+    // Resizes `pool` for the current grid_width*height*depth and cellSize/min_particle_radius
+    // ratio, then repoints every Chunk3d::data at its slice. Only needed when the grid's shape
+    // or the smallest tracked particle changes, not on every frame.
+    void rebuild_pool();
 
     enum { FUNC, NONE, DEFAULT, LAMBDA } collision_type{ DEFAULT };
     void (*collision_function)(PhysicBody3d*, PhysicBody3d*);
@@ -161,8 +173,8 @@ public:
         glEndList();
     }
     void draw(sf::RenderTarget& target, sf::RenderStates states) const;
-    void drawSphere(const Vec2 pos, const float radius, const sf::Color color) const{
-    }
+    // void drawSphere(const Vec2 pos, const float radius, const sf::Color color) const{
+    // }
 protected:
     const PhysicSolver3d& physicSolver;
     GLuint sphereList;
