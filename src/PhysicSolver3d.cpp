@@ -38,6 +38,97 @@ inline void accumulate_collision_pair(PhysicBody3d* first, PhysicBody3d* second,
         corrections.push_back({ second, correction * -1.f });
     }
 }
+
+inline float dot(const Vec3& a, const Vec3& b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+inline Vec3 cross(const Vec3& a, const Vec3& b) {
+    return Vec3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+}
+
+// Closest point on triangle (a,b,c) to point p. Standard region-test approach
+// (Ericson, "Real-Time Collision Detection", 5.1.5).
+Vec3 closest_point_on_triangle(const Vec3& p, const Vec3& a, const Vec3& b, const Vec3& c) {
+    const Vec3 ab = b - a;
+    const Vec3 ac = c - a;
+    const Vec3 ap = p - a;
+
+    const float d1 = dot(ab, ap);
+    const float d2 = dot(ac, ap);
+    if (d1 <= 0.f && d2 <= 0.f) {
+        return a;
+    }
+
+    const Vec3 bp = p - b;
+    const float d3 = dot(ab, bp);
+    const float d4 = dot(ac, bp);
+    if (d3 >= 0.f && d4 <= d3) {
+        return b;
+    }
+
+    const float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.f && d1 >= 0.f && d3 <= 0.f) {
+        const float v = d1 / (d1 - d3);
+        return a + ab * v;
+    }
+
+    const Vec3 cp = p - c;
+    const float d5 = dot(ab, cp);
+    const float d6 = dot(ac, cp);
+    if (d6 >= 0.f && d5 <= d6) {
+        return c;
+    }
+
+    const float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.f && d2 >= 0.f && d6 <= 0.f) {
+        const float w = d2 / (d2 - d6);
+        return a + ac * w;
+    }
+
+    const float va = d3 * d6 - d5 * d4;
+    if (va <= 0.f && (d4 - d3) >= 0.f && (d5 - d6) >= 0.f) {
+        const float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return b + (c - b) * w;
+    }
+
+    const float denom = 1.f / (va + vb + vc);
+    const float v = vb * denom;
+    const float w = vc * denom;
+    return a + ab * v + ac * w;
+}
+
+inline void accumulate_planet_collision(const Triangle3d& tri, PhysicBody3d* body, std::vector<CollisionCorrection>& corrections) {
+    if (!body->isKinematic) {
+        return;
+    }
+
+    const Vec3 center = body->getPos();
+    const Vec3 closest = closest_point_on_triangle(center, tri.p0, tri.p1, tri.p2);
+
+    Vec3 diff = center - closest;
+    float dist = diff.length();
+
+    const float radius = body->getRadius();
+    if (dist >= radius) {
+        return;
+    }
+
+    Vec3 normal;
+    if (dist <= std::numeric_limits<float>::epsilon()) {
+        normal = cross(tri.p1 - tri.p0, tri.p2 - tri.p0).normal();
+        dist = 0.f;
+    } else {
+        normal = diff / dist;
+    }
+
+    // Only the particle moves (the terrain is static), but still resolve half the
+    // overlap per substep rather than snapping fully onto the surface in one step -
+    // matches accumulate_collision_pair's softness and avoids a single large Verlet
+    // velocity spike if a fast particle tunnels deep into a triangle in one substep.
+    const float overlap = radius - dist;
+    corrections.push_back({ body, normal * (overlap * 0.5f) });
+}
 }
 
 ////ChunkGrid:
@@ -322,6 +413,10 @@ void PhysicSolver3d::update(long long (&simResult)[7], const float dtime, const 
         end = std::chrono::steady_clock::now();
         simResult[4] += std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
         begin = std::chrono::steady_clock::now();
+        update_planet_collision();
+        end = std::chrono::steady_clock::now();
+        simResult[6] += std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
+        begin = std::chrono::steady_clock::now();
         update_position(sub_dt);
         end = std::chrono::steady_clock::now();
         simResult[5] += std::chrono::duration_cast<std::chrono::microseconds>(end - begin).count();
@@ -381,6 +476,45 @@ void PhysicSolver3d::update_collision() {
                     j->current_position += diff / diffLen * (dist / 2);
                 }
             }
+        }
+    }
+}
+
+void PhysicSolver3d::update_planet_collision() {
+    if (!planet || objects.empty()) {
+        return;
+    }
+
+    const std::vector<Triangle3d>& triangles = planet->getSurfaceTriangles();
+    if (triangles.empty()) {
+        return;
+    }
+
+    const int thread_count = std::min(omp_get_max_threads(), static_cast<int>(triangles.size()));
+    if (thread_count <= 0) {
+        return;
+    }
+
+    std::vector<std::vector<CollisionCorrection>> thread_corrections(thread_count);
+
+    // Split by triangle, not by particle: there are far fewer triangles than particles,
+    // but each thread still brute-forces every particle against its share of triangles.
+    #pragma omp parallel num_threads(thread_count)
+    {
+        std::vector<CollisionCorrection>& corrections = thread_corrections[omp_get_thread_num()];
+
+        #pragma omp for schedule(static)
+        for (int t = 0; t < static_cast<int>(triangles.size()); ++t) {
+            const Triangle3d& tri = triangles[t];
+            for (PhysicBody3d* body : objects) {
+                accumulate_planet_collision(tri, body, corrections);
+            }
+        }
+    }
+
+    for (const auto& corrections : thread_corrections) {
+        for (const auto& correction : corrections) {
+            correction.body->current_position += correction.delta;
         }
     }
 }

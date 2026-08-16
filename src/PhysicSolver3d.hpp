@@ -14,6 +14,7 @@
 
 #include "PhysicBody3d.h"
 #include "PhysicLink3d.h"
+#include "planet.hpp"
 
 #include <omp.h>
 
@@ -113,7 +114,7 @@ protected:
 
 class PhysicSolver3d{
 public:
-    PhysicSolver3d(ChunkGrid3d g) : grid { g } {}
+    PhysicSolver3d(ChunkGrid3d g, const Planet* planet = nullptr) : grid { g }, planet{ planet } {}
     ~PhysicSolver3d() {
         for (auto& i : objects) { delete(i); }
         for (auto& i : links) { delete(i); }
@@ -129,6 +130,7 @@ public:
     void update_acceleration();
     void update_constraints();
     void update_collision();
+    void update_planet_collision();
     void update_links() {
         for (auto& i : links)
         {
@@ -157,6 +159,7 @@ public:
 protected:
     std::vector<PhysicLink3d*> links{};
     ChunkGrid3d grid;
+    const Planet* planet;
     friend class PhysicDrawer;
 
     enum { FUNC, NONE, VALUE, DEFAULT } acceleration_type{ NONE }, constraint_type{ DEFAULT };

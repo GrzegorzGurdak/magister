@@ -15,6 +15,11 @@
 
 #include "MVec.hpp"
 
+struct Triangle3d
+{
+    Vec3 p0, p1, p2;
+};
+
 class Sphere : public sf::Drawable
 {
 public:
@@ -28,6 +33,17 @@ public:
     virtual ~Sphere() {
         deleteDisplayLists();
     };
+
+    // World-space triangles of the (possibly terrain-displaced) surface, for collision.
+    // Built lazily and cached: displacedPoint() calls the virtual radiusOffsetForVertex(),
+    // which can't resolve to a derived override (e.g. Planet's terrain noise) while still
+    // inside the Sphere constructor, and the surface never changes after construction
+    // anyway, so a one-time cache avoids recomputing per-triangle noise every collision check.
+    const std::vector<Triangle3d>& getSurfaceTriangles() const {
+        if (surfaceCacheDirty)
+            buildSurfaceCache();
+        return surfaceTriangles;
+    }
 
     void draw(sf::RenderTarget& target, sf::RenderStates states) const override{
         (void)target;
@@ -187,6 +203,21 @@ private:
         }
     }
 
+    void buildSurfaceCache() const
+    {
+        surfaceTriangles.clear();
+        surfaceTriangles.reserve(indices.size());
+        for (const auto& face : indices)
+        {
+            surfaceTriangles.push_back({
+                position + displacedPoint(vertices[face[0]]),
+                position + displacedPoint(vertices[face[1]]),
+                position + displacedPoint(vertices[face[2]])
+            });
+        }
+        surfaceCacheDirty = false;
+    }
+
     unsigned int midpointIndex(unsigned int i0, unsigned int i1, std::unordered_map<unsigned long long, unsigned int>& cache)
     {
         const unsigned int a = std::min(i0, i1);
@@ -272,6 +303,9 @@ private:
     mutable GLuint fillList = 0;
     mutable GLuint wireFrameList = 0;
     mutable bool listsDirty = true;
+
+    mutable std::vector<Triangle3d> surfaceTriangles;
+    mutable bool surfaceCacheDirty = true;
 };
 
 #endif // SPHERE_HPP

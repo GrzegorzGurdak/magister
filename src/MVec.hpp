@@ -102,10 +102,11 @@ struct Vec3
     static const Vec3 FORWARD;
     static const Vec3 BACK;
 
-    static Vec3 random_rad(float max_radius) {
+    static Vec3 random_rad(float min_radius, float max_radius) {
         float yaw = rand() * 2.f * M_PIF / RAND_MAX;
         float pitch = rand() * 2.f * M_PIF / RAND_MAX;
-        return Vec3(sinf(yaw) * cosf(pitch), sinf(pitch), cosf(yaw) * cosf(pitch)) * (max_radius * rand() / RAND_MAX);
+        float radius = min_radius + (max_radius - min_radius) * rand() / RAND_MAX;
+        return Vec3(sinf(yaw) * cosf(pitch), sinf(pitch), cosf(yaw) * cosf(pitch)) * radius;
     }
 
     static float angleBetween(const Vec3 base, const Vec3 target);
