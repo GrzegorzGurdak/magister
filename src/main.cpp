@@ -59,14 +59,14 @@ int main(int argc, char** argv)
 
     //PhysicBody3d* controlObj;
 
-    for(int i = 0; i < 1000; i++)
+    for(int i = 0; i < 5000; i++)
     {
         PhysicBody3d* obj = new PhysicBody3d(
             Vec3::random_rad(80.f, 100.f),
             1.f,
-            // sf::Color(rand() % 256, rand() % 256, rand() % 256)
+            sf::Color(rand() % 256, rand() % 256, rand() % 256)
             //ocean blue sf::Color(0, 105, 148)
-            sf::Color(11, 57, 135)
+            //sf::Color(11, 57, 135)
         );
         sandbox.add(obj);
         // controlObj = obj; //last added object will be for debug

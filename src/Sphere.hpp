@@ -452,12 +452,18 @@ public:
 
     const std::vector<Triangle3d>& allTriangles() const { return *triangles; }
 
-    // Appends indices (into allTriangles()) of triangles bucketed near
-    // `direction` - the home bucket plus its neighbors, since a triangle whose
-    // centroid falls in an adjacent bucket can still be the closest one. Does
-    // not clear outIndices first, may contain duplicates (harmless - checking
-    // the same triangle twice just wastes a comparison, not correctness).
-    void queryNearby(const Vec3& direction, std::vector<int>& outIndices) const
+    // Calls f(triangleIndex) for every triangle (into allTriangles()) bucketed
+    // near `direction` - the home bucket plus its neighbors, since a triangle
+    // whose centroid falls in an adjacent bucket can still be the closest one.
+    // May call f twice for the same triangle if it sits in more than one queried
+    // bucket (harmless - the caller just wastes a comparison, not correctness).
+    // Templated + inlined so this compiles down to the same code as writing the
+    // bucket loop directly at the call site, without materializing a candidate
+    // list in between - the loop runs once per particle per substep, so that
+    // list would otherwise mean an allocation-amortized vector clear + a burst
+    // of small copies for every single particle near the surface.
+    template <typename Func>
+    void forEachNearby(const Vec3& direction, Func&& f) const
     {
         int ti, pi;
         bucketing.bucketFor(direction, ti, pi);
@@ -480,8 +486,9 @@ public:
             for (int dp = -phiRadius; dp <= phiRadius; ++dp)
             {
                 const int p = ((pi + dp) % bucketing.phiCount + bucketing.phiCount) % bucketing.phiCount;
-                const auto& bucket = buckets[static_cast<size_t>(t) * bucketing.phiCount + p];
-                outIndices.insert(outIndices.end(), bucket.begin(), bucket.end());
+                for (int triIdx : buckets[static_cast<size_t>(t) * bucketing.phiCount + p]) {
+                    f(triIdx);
+                }
             }
         }
     }

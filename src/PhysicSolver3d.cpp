@@ -531,93 +531,88 @@ void PhysicSolver3d::update_planet_collision_heightfield() {
     // Each particle only ever touches its own current_position here (there's no
     // pairwise interaction like in accumulate_collision_pair), so this can write
     // directly without deferred corrections - splitting by particle is race-free.
-    // `candidates` is declared once per thread (outside the omp for) and reused
-    // across that thread's particles, so it isn't reallocated every iteration.
-    #pragma omp parallel
-    {
-        std::vector<int> candidates;
-
-        #pragma omp for schedule(static)
-        for (int idx = 0; idx < static_cast<int>(objects.size()); ++idx) {
-            PhysicBody3d* body = objects[idx];
-            if (!body->isKinematic) {
-                continue;
-            }
-
-            const Vec3 toBody = body->getPos() - center;
-            const float dist = toBody.length();
-            if (dist <= std::numeric_limits<float>::epsilon()) {
-                continue;
-            }
-
-            const float radius = body->getRadius();
-
-            // Broad phase: cheap reject via the baked (approximate) height field.
-            // Generous margin since it's only used to skip particles that are
-            // clearly nowhere near the surface - it never resolves a collision by
-            // itself, so it doesn't need to be precise, just fast.
-            const float approxSurfaceRadius = planetHeightField->surfaceRadiusAt(toBody);
-            if (dist > approxSurfaceRadius + radius * 3.f) {
-                continue;
-            }
-
-            // Narrow phase: the triangle grid's home bucket for this direction
-            // plus its neighbors covers every triangle that could plausibly be
-            // the closest one - the same "center cell + neighbors" shape
-            // ChunkGrid3d uses for particle-particle collision, just bucketed by
-            // direction instead of position. Resolve against the real geometry
-            // (exact closest_point_on_triangle), not an interpolated estimate:
-            // that's what makes this robust right at a cliff edge, where a
-            // height-field-derived normal kept going wrong no matter how the
-            // approximation was tuned.
-            candidates.clear();
-            planetTriangleGrid->queryNearby(toBody, candidates);
-
-            float bestDist = std::numeric_limits<float>::max();
-            Vec3 bestClosest{};
-            for (int triIdx : candidates) {
-                const Triangle3d& tri = triangles[triIdx];
-                const Vec3 closest = closest_point_on_triangle(body->getPos(), tri.p0, tri.p1, tri.p2);
-                const float d = (body->getPos() - closest).length();
-                if (d < bestDist) {
-                    bestDist = d;
-                    bestClosest = closest;
-                }
-            }
-            if (bestDist >= radius || bestDist == std::numeric_limits<float>::max()) {
-                // The exact search found nothing within radius. That's the normal
-                // case for a particle genuinely floating above the surface - but
-                // it's also what happens when a particle is buried MORE than one
-                // radius deep (the nearest candidate triangle is then farther than
-                // radius away too) or when the triangle bucket neighborhood just
-                // missed the true nearest triangle. Those look identical from
-                // bestDist alone, so without this fallback a buried particle gets
-                // zero corrective force forever - it's permanently stuck, since
-                // nothing else in this function ever revisits it. The (coarser,
-                // already-computed) height field can tell the difference: if the
-                // particle's radial distance is less than the approximate terrain
-                // height here, it's below the surface and needs to be nudged back
-                // out, capped and softened the same way as a normal correction so
-                // a deeply-buried particle walks back out over several substeps
-                // instead of snapping out in one.
-                if (dist < approxSurfaceRadius) {
-                    const float buriedOverlap = std::min(approxSurfaceRadius + radius - dist, radius);
-                    body->current_position += (toBody / dist) * (buriedOverlap * 0.5f);
-                }
-                continue;
-            }
-
-            Vec3 diff = body->getPos() - bestClosest;
-            const Vec3 normal = (bestDist <= std::numeric_limits<float>::epsilon())
-                ? (toBody / dist)
-                : diff / bestDist;
-
-            // Exact closest-point distance is always >= 0, so this overlap is
-            // naturally bounded to at most `radius` - no separate magnitude clamp
-            // needed, unlike the old height-field-plane approximation.
-            const float overlap = radius - bestDist;
-            body->current_position += normal * (overlap * 0.5f);
+    #pragma omp parallel for schedule(static)
+    for (int idx = 0; idx < static_cast<int>(objects.size()); ++idx) {
+        PhysicBody3d* body = objects[idx];
+        if (!body->isKinematic) {
+            continue;
         }
+
+        const Vec3 bodyPos = body->getPos();
+        const Vec3 toBody = bodyPos - center;
+        const float dist = toBody.length();
+        if (dist <= std::numeric_limits<float>::epsilon()) {
+            continue;
+        }
+
+        const float radius = body->getRadius();
+
+        // Broad phase: cheap reject via the baked (approximate) height field.
+        // Generous margin since it's only used to skip particles that are
+        // clearly nowhere near the surface - it never resolves a collision by
+        // itself, so it doesn't need to be precise, just fast.
+        const float approxSurfaceRadius = planetHeightField->surfaceRadiusAt(toBody);
+        if (dist > approxSurfaceRadius + radius * 3.f) {
+            continue;
+        }
+
+        // Narrow phase: the triangle grid's home bucket for this direction plus
+        // its neighbors covers every triangle that could plausibly be the
+        // closest one - the same "center cell + neighbors" shape ChunkGrid3d
+        // uses for particle-particle collision, just bucketed by direction
+        // instead of position. Resolve against the real geometry (exact
+        // closest_point_on_triangle), not an interpolated estimate: that's what
+        // makes this robust right at a cliff edge, where a height-field-derived
+        // normal kept going wrong no matter how the approximation was tuned.
+        // Compares squared distances so the (relatively expensive) sqrt only
+        // runs once, for the eventual winner, instead of once per candidate.
+        float bestDistSq = std::numeric_limits<float>::max();
+        Vec3 bestClosest{};
+        planetTriangleGrid->forEachNearby(toBody, [&](int triIdx) {
+            const Triangle3d& tri = triangles[triIdx];
+            const Vec3 closest = closest_point_on_triangle(bodyPos, tri.p0, tri.p1, tri.p2);
+            const Vec3 diff = bodyPos - closest;
+            const float dSq = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+            if (dSq < bestDistSq) {
+                bestDistSq = dSq;
+                bestClosest = closest;
+            }
+        });
+        const float radiusSq = radius * radius;
+        if (bestDistSq >= radiusSq || bestDistSq == std::numeric_limits<float>::max()) {
+            // The exact search found nothing within radius. That's the normal
+            // case for a particle genuinely floating above the surface - but
+            // it's also what happens when a particle is buried MORE than one
+            // radius deep (the nearest candidate triangle is then farther than
+            // radius away too) or when the triangle bucket neighborhood just
+            // missed the true nearest triangle. Those look identical from
+            // bestDistSq alone, so without this fallback a buried particle gets
+            // zero corrective force forever - it's permanently stuck, since
+            // nothing else in this function ever revisits it. The (coarser,
+            // already-computed) height field can tell the difference: if the
+            // particle's radial distance is less than the approximate terrain
+            // height here, it's below the surface and needs to be nudged back
+            // out, capped and softened the same way as a normal correction so
+            // a deeply-buried particle walks back out over several substeps
+            // instead of snapping out in one.
+            if (dist < approxSurfaceRadius) {
+                const float buriedOverlap = std::min(approxSurfaceRadius + radius - dist, radius);
+                body->current_position += (toBody / dist) * (buriedOverlap * 0.5f);
+            }
+            continue;
+        }
+
+        const float bestDist = std::sqrt(bestDistSq);
+        const Vec3 diff = bodyPos - bestClosest;
+        const Vec3 normal = (bestDist <= std::numeric_limits<float>::epsilon())
+            ? (toBody / dist)
+            : diff / bestDist;
+
+        // Exact closest-point distance is always >= 0, so this overlap is
+        // naturally bounded to at most `radius` - no separate magnitude clamp
+        // needed, unlike the old height-field-plane approximation.
+        const float overlap = radius - bestDist;
+        body->current_position += normal * (overlap * 0.5f);
     }
 }
 
