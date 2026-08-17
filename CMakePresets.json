@@ -9,7 +9,7 @@
     {
       "name": "gcc-debug",
       "displayName": "GCC Debug",
-      "generator": "MinGW Makefiles",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/gcc-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
@@ -21,7 +21,7 @@
     {
       "name": "gcc-release",
       "displayName": "GCC Release",
-      "generator": "MinGW Makefiles",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/gcc-release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
@@ -33,7 +33,7 @@
     {
       "name": "clang-debug",
       "displayName": "Clang Debug",
-      "generator": "MinGW Makefiles",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/clang-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
@@ -45,7 +45,7 @@
     {
       "name": "clang-release",
       "displayName": "Clang Release",
-      "generator": "MinGW Makefiles",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/clang-release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
