@@ -32,7 +32,7 @@ int main(int argc, char** argv)
 
     float angle = 0.f;
 
-    Planet ball(Vec3(0.f, 0.f, 0.f), 30.f, 5, true);
+    Planet ball(Vec3(0.f, 0.f, 0.f), 50.f, 5, true);
 
     sf::Font font;
 	if (!font.openFromFile("fonts/arial.ttf")) {
@@ -95,10 +95,10 @@ int main(int argc, char** argv)
 
         glMatrixMode(GL_MODELVIEW);
         glLoadIdentity();
-        glTranslatef(0.f, 0.f, -200.f);
-        glRotatef(angle*50.f, 0.f, 1.f, 0.f);
+        glTranslatef(0.f, 0.f, -400.f);
+        glRotatef(angle, 0.f, 1.f, 0.f);
 
-        sandbox.update(timeResults, 1 / 30.f, 4);
+        sandbox.update(timeResults, 1 / 30.f, 8);
         statElement.update();
 
         //std::cout << controlObj->getPos() << "\n";
@@ -110,9 +110,9 @@ int main(int argc, char** argv)
 		window.draw(statElement);
 		window.popGLStates();
 
-        angle += 0.002f;
-        if (angle >= M_PIF * 2.f)
-            angle -= M_PIF * 2.f;
+        angle += 0.005f * 50;
+        if (angle >= 360.f)
+            angle -= 360.f;
 
         window.display();
     }

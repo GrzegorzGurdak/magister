@@ -115,11 +115,19 @@ protected:
 
 class PhysicSolver3d{
 public:
-    // thetaHeightSamples/phiHeightSamples size the SphereHeightField baked for
-    // update_planet_collision_heightfield(); ignored if planet is null.
-    PhysicSolver3d(ChunkGrid3d g, const Planet* planet = nullptr, int thetaHeightSamples = 128*4, int phiHeightSamples = 256*4)
+    // update_planet_collision_heightfield() is a two-phase check: the height field
+    // (thetaHeightSamples/phiHeightSamples) is only a cheap "is this particle
+    // anywhere near the surface" broad-phase reject, so it doesn't need to be
+    // finer than the particles it's rejecting are - actual collision resolution
+    // uses the exact mesh triangles, looked up via the triangle grid
+    // (thetaTriBuckets/phiTriBuckets) instead of brute-forcing every triangle.
+    // Both ignored if planet is null.
+    PhysicSolver3d(ChunkGrid3d g, const Planet* planet = nullptr,
+        int thetaHeightSamples = 128, int phiHeightSamples = 256,
+        int thetaTriBuckets = 64, int phiTriBuckets = 128)
         : grid{ std::move(g) }, planet{ planet },
-          planetHeightField{ planet ? std::make_unique<SphereHeightField>(*planet, thetaHeightSamples, phiHeightSamples) : nullptr }
+          planetHeightField{ planet ? std::make_unique<SphereHeightField>(*planet, thetaHeightSamples, phiHeightSamples) : nullptr },
+          planetTriangleGrid{ planet ? std::make_unique<SphereTriangleGrid>(*planet, thetaTriBuckets, phiTriBuckets) : nullptr }
     {}
     ~PhysicSolver3d() {
         for (auto& i : objects) { delete(i); }
@@ -168,6 +176,7 @@ protected:
     ChunkGrid3d grid;
     const Planet* planet;
     std::unique_ptr<SphereHeightField> planetHeightField;
+    std::unique_ptr<SphereTriangleGrid> planetTriangleGrid;
     friend class PhysicDrawer;
 
     enum { FUNC, NONE, VALUE, DEFAULT } acceleration_type{ NONE }, constraint_type{ DEFAULT };

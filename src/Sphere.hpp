@@ -317,64 +317,98 @@ private:
     mutable bool surfaceCacheDirty = true;
 };
 
-// Alternate collision acceleration structure for a Sphere's surface: instead of
-// scanning triangles, bake the surface radius on a theta/phi grid once up front,
-// then resolve a particle's collision with a single bilinear-interpolated lookup
-// by direction from center. Trades the mesh's exact geometry for O(1) queries -
-// good when there are far more particles than there is time to brute-force them
-// against a triangle list every step.
+// Maps a direction from a sphere's center to a (thetaBucket, phiBucket) cell in a
+// thetaCount x phiCount grid. Shared by SphereHeightField and SphereTriangleGrid
+// so both bucket directions the same way.
+struct SphericalBucketing
+{
+    int thetaCount;
+    int phiCount;
+
+    static float wrapPhi(float phi)
+    {
+        const float twoPi = 2.f * M_PIF;
+        phi = std::fmod(phi, twoPi);
+        if (phi < 0.f)
+            phi += twoPi;
+        return phi;
+    }
+
+    static void anglesFor(const Vec3& direction, float& theta, float& phi)
+    {
+        const float len = std::sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
+        if (len <= 0.f) {
+            theta = 0.f;
+            phi = 0.f;
+            return;
+        }
+        theta = std::acos(std::clamp(direction.y / len, -1.f, 1.f));
+        phi = wrapPhi(std::atan2(direction.z / len, direction.x / len));
+    }
+
+    static Vec3 directionForAngles(float theta, float phi)
+    {
+        const float sinTheta = std::sin(theta);
+        return Vec3(sinTheta * std::cos(phi), std::cos(theta), sinTheta * std::sin(phi));
+    }
+
+    void bucketFor(const Vec3& direction, int& ti, int& pi) const
+    {
+        float theta, phi;
+        anglesFor(direction, theta, phi);
+        ti = std::clamp(static_cast<int>(theta / M_PIF * thetaCount), 0, thetaCount - 1);
+        pi = static_cast<int>(phi / (2.f * M_PIF) * phiCount) % phiCount;
+    }
+};
+
+// Bakes the surface radius on a theta/phi grid once up front, for a cheap O(1)
+// "is this particle anywhere near the surface" broad-phase reject - not precise
+// enough to resolve a collision from (see SphereTriangleGrid for that), just fast
+// enough to skip the exact check for particles that are clearly nowhere close.
 class SphereHeightField
 {
 public:
     SphereHeightField(const Sphere& sphere, int thetaSamples, int phiSamples)
-        : thetaSamples{ std::max(2, thetaSamples) }, phiSamples{ std::max(3, phiSamples) }
+        : bucketing{ std::max(2, thetaSamples), std::max(3, phiSamples) }
     {
-        radii.resize(static_cast<size_t>(this->thetaSamples) * this->phiSamples);
+        radii.resize(static_cast<size_t>(bucketing.thetaCount) * bucketing.phiCount);
 
         #pragma omp parallel for schedule(static)
-        for (int ti = 0; ti < this->thetaSamples; ++ti)
+        for (int ti = 0; ti < bucketing.thetaCount; ++ti)
         {
-            const float theta = M_PIF * ti / (this->thetaSamples - 1); // [0, pi], pole to pole
-            const float sinTheta = std::sin(theta);
-            const float cosTheta = std::cos(theta);
-            for (int pi = 0; pi < this->phiSamples; ++pi)
+            for (int pi = 0; pi < bucketing.phiCount; ++pi)
             {
-                const float phi = 2.f * M_PIF * pi / this->phiSamples; // [0, 2pi)
-                const Vec3 dir(sinTheta * std::cos(phi), cosTheta, sinTheta * std::sin(phi));
-                radii[static_cast<size_t>(ti) * this->phiSamples + pi] = sphere.surfaceRadiusFor(dir);
+                const float theta = M_PIF * ti / (bucketing.thetaCount - 1);
+                const float phi = 2.f * M_PIF * pi / bucketing.phiCount;
+                radii[static_cast<size_t>(ti) * bucketing.phiCount + pi] =
+                    sphere.surfaceRadiusFor(SphericalBucketing::directionForAngles(theta, phi));
             }
         }
     }
 
-    // direction need not be normalized or in world space relative to the sphere's
-    // center - caller passes (particlePos - sphere.getPosition()).
+    // Bilinearly interpolated surface radius along `direction` from center.
+    // direction need not be normalized or in world space - caller passes
+    // (particlePos - sphere.getPosition()).
     float surfaceRadiusAt(const Vec3& direction) const
     {
-        const float len = std::sqrt(direction.x * direction.x + direction.y * direction.y + direction.z * direction.z);
-        if (len <= 0.f)
-            return 0.f;
-        const float nx = direction.x / len, ny = direction.y / len, nz = direction.z / len;
+        float theta, phi;
+        SphericalBucketing::anglesFor(direction, theta, phi);
 
-        const float theta = std::acos(std::clamp(ny, -1.f, 1.f));
-        float phi = std::atan2(nz, nx);
-        if (phi < 0.f)
-            phi += 2.f * M_PIF;
+        const float tf = theta / M_PIF * (bucketing.thetaCount - 1);
+        const float pf = phi / (2.f * M_PIF) * bucketing.phiCount;
 
-        const float tf = theta / M_PIF * (thetaSamples - 1);
-        const float pf = phi / (2.f * M_PIF) * phiSamples;
-
-        const int t0 = std::clamp(static_cast<int>(tf), 0, thetaSamples - 1);
-        const int t1 = std::clamp(t0 + 1, 0, thetaSamples - 1);
+        const int t0 = std::clamp(static_cast<int>(tf), 0, bucketing.thetaCount - 1);
+        const int t1 = std::clamp(t0 + 1, 0, bucketing.thetaCount - 1);
         const float tFrac = tf - t0;
 
-        const int p0 = static_cast<int>(pf) % phiSamples;
-        const int p1 = (p0 + 1) % phiSamples;
+        const int p0 = static_cast<int>(pf) % bucketing.phiCount;
+        const int p1 = (p0 + 1) % bucketing.phiCount;
         const float pFrac = pf - std::floor(pf);
 
-        const float r00 = radii[static_cast<size_t>(t0) * phiSamples + p0];
-        const float r01 = radii[static_cast<size_t>(t0) * phiSamples + p1];
-        const float r10 = radii[static_cast<size_t>(t1) * phiSamples + p0];
-        const float r11 = radii[static_cast<size_t>(t1) * phiSamples + p1];
+        const float r00 = radii[static_cast<size_t>(t0) * bucketing.phiCount + p0];
+        const float r01 = radii[static_cast<size_t>(t0) * bucketing.phiCount + p1];
+        const float r10 = radii[static_cast<size_t>(t1) * bucketing.phiCount + p0];
+        const float r11 = radii[static_cast<size_t>(t1) * bucketing.phiCount + p1];
 
         const float r0 = r00 + (r01 - r00) * pFrac;
         const float r1 = r10 + (r11 - r10) * pFrac;
@@ -382,9 +416,68 @@ public:
     }
 
 private:
-    int thetaSamples;
-    int phiSamples;
+    SphericalBucketing bucketing;
     std::vector<float> radii; // row-major: theta-major, phi-minor
+};
+
+// Buckets a Sphere's cached surface triangles (by centroid direction from
+// center) into a coarse theta/phi grid, mirroring ChunkGrid3d's spatial-hash
+// pattern - just for triangles-by-direction instead of particles-by-position.
+// Lets a collision check find the handful of triangles actually near a given
+// direction (a bucket's contents plus its immediate neighbors) instead of
+// brute-forcing every triangle on the planet. Resolving against the real,
+// exact triangles this way - rather than an interpolated/baked approximation -
+// is what makes this robust right at steep terrain: closest_point_on_triangle
+// has no equivalent of the height-field-normal instability, since it's exact
+// geometry, not a blended estimate.
+class SphereTriangleGrid
+{
+public:
+    SphereTriangleGrid(const Sphere& sphere, int thetaBuckets, int phiBuckets)
+        : bucketing{ std::max(1, thetaBuckets), std::max(1, phiBuckets) },
+          triangles{ &sphere.getSurfaceTriangles() }
+    {
+        buckets.resize(static_cast<size_t>(bucketing.thetaCount) * bucketing.phiCount);
+
+        const Vec3 center = sphere.getPosition();
+        for (size_t i = 0; i < triangles->size(); ++i)
+        {
+            const Triangle3d& tri = (*triangles)[i];
+            const Vec3 centroid = (tri.p0 + tri.p1 + tri.p2) * (1.f / 3.f);
+            int ti, pi;
+            bucketing.bucketFor(centroid - center, ti, pi);
+            buckets[static_cast<size_t>(ti) * bucketing.phiCount + pi].push_back(static_cast<int>(i));
+        }
+    }
+
+    const std::vector<Triangle3d>& allTriangles() const { return *triangles; }
+
+    // Appends indices (into allTriangles()) of triangles bucketed near
+    // `direction` - the home bucket plus its neighbors, since a triangle whose
+    // centroid falls in an adjacent bucket can still be the closest one. Does
+    // not clear outIndices first, may contain duplicates (harmless - checking
+    // the same triangle twice just wastes a comparison, not correctness).
+    void queryNearby(const Vec3& direction, std::vector<int>& outIndices) const
+    {
+        int ti, pi;
+        bucketing.bucketFor(direction, ti, pi);
+
+        for (int dt = -1; dt <= 1; ++dt)
+        {
+            const int t = std::clamp(ti + dt, 0, bucketing.thetaCount - 1);
+            for (int dp = -1; dp <= 1; ++dp)
+            {
+                const int p = ((pi + dp) % bucketing.phiCount + bucketing.phiCount) % bucketing.phiCount;
+                const auto& bucket = buckets[static_cast<size_t>(t) * bucketing.phiCount + p];
+                outIndices.insert(outIndices.end(), bucket.begin(), bucket.end());
+            }
+        }
+    }
+
+private:
+    SphericalBucketing bucketing;
+    const std::vector<Triangle3d>* triangles;
+    std::vector<std::vector<int>> buckets;
 };
 
 #endif // SPHERE_HPP
