@@ -5,14 +5,14 @@
 struct PhysicBody2d
 {
 	PhysicBody2d(Vec2 cp, float r, sf::Color  cl):
-		current_position{ cp }, old_position{ cp }, radius{ r }, cs{ r }
+		radius{ r }, current_position{ cp }, old_position{ cp }, cs{ r }
 	{
 		cs.setFillColor(cl);
 		cs.setPosition(current_position - Vec2{ radius,radius });
 	}
 
-	PhysicBody2d(Vec2 cp = {}, float r = { 20 }) :
-		current_position{ cp }, old_position{ cp }, radius{ r }, cs{ r }
+	PhysicBody2d(Vec2 cp = {}, float r = 20.f) :
+		radius{ r }, current_position{ cp }, old_position{ cp }, cs{ r }
 	{
 		cs.setFillColor(sf::Color(rand() % 256, rand() % 256, rand() % 256));
 		cs.setPosition(current_position - Vec2{ radius,radius });

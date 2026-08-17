@@ -134,10 +134,10 @@ inline void accumulate_planet_collision(const Triangle3d& tri, PhysicBody3d* bod
 ////ChunkGrid:
 
 ChunkGrid3d::ChunkGrid3d(int cS, float minParticleSize, Vec3 beginning, Vec3 end) :
-    cellSize{ cS },
     beginning{ beginning }, end{ end },
-    window_width{int(end.x - beginning.x)}, window_height{ int(end.y - beginning.y) }, window_depth{ int(end.z - beginning.z) },
-    grid_width{ int((end.x - beginning.x) / cS) }, grid_height{ int((end.y - beginning.y) / cS) }, grid_depth{ int((end.z - beginning.z)/cS) }
+    cellSize{ cS },
+    grid_width{ int((end.x - beginning.x) / cS) }, grid_height{ int((end.y - beginning.y) / cS) }, grid_depth{ int((end.z - beginning.z)/cS) },
+    window_width{int(end.x - beginning.x)}, window_height{ int(end.y - beginning.y) }, window_depth{ int(end.z - beginning.z) }
 {
     // int gW = wW / cS;
     // int gH = wH / cS;
@@ -168,7 +168,7 @@ void ChunkGrid3d::rebuild_pool() {
     pool.assign(static_cast<size_t>(grid.size()) * per_chunk_capacity, nullptr);
     for (size_t i = 0; i < grid.size(); ++i) {
         grid[i].data = &pool[i * per_chunk_capacity];
-        grid[i].capacity = per_chunk_capacity;
+        grid[i].capacity = per_chunk_capacity * 2;
         grid[i].size = 0;
     }
 
@@ -585,6 +585,25 @@ void PhysicSolver3d::update_planet_collision_heightfield() {
                 }
             }
             if (bestDist >= radius || bestDist == std::numeric_limits<float>::max()) {
+                // The exact search found nothing within radius. That's the normal
+                // case for a particle genuinely floating above the surface - but
+                // it's also what happens when a particle is buried MORE than one
+                // radius deep (the nearest candidate triangle is then farther than
+                // radius away too) or when the triangle bucket neighborhood just
+                // missed the true nearest triangle. Those look identical from
+                // bestDist alone, so without this fallback a buried particle gets
+                // zero corrective force forever - it's permanently stuck, since
+                // nothing else in this function ever revisits it. The (coarser,
+                // already-computed) height field can tell the difference: if the
+                // particle's radial distance is less than the approximate terrain
+                // height here, it's below the surface and needs to be nudged back
+                // out, capped and softened the same way as a normal correction so
+                // a deeply-buried particle walks back out over several substeps
+                // instead of snapping out in one.
+                if (dist < approxSurfaceRadius) {
+                    const float buriedOverlap = std::min(approxSurfaceRadius + radius - dist, radius);
+                    body->current_position += (toBody / dist) * (buriedOverlap * 0.5f);
+                }
                 continue;
             }
 

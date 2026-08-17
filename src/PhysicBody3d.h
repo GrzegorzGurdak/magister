@@ -5,13 +5,13 @@
 struct PhysicBody3d
 {
 	PhysicBody3d(Vec3 cp, float r, sf::Color  cl):
-		current_position{ cp }, radius{ r }, old_position{ cp }
+		radius{ r }, current_position{ cp }, old_position{ cp }
 	{
 		color = cl;
 	}
 
 	PhysicBody3d(Vec3 cp = {}, float r = 20.f) :
-		current_position{ cp }, radius{ r }, old_position{ cp }
+		radius{ r }, current_position{ cp }, old_position{ cp }
 	{
 		color = sf::Color(rand() % 256, rand() % 256, rand() % 256);
 	}
@@ -41,10 +41,8 @@ struct PhysicBody3d
 
 	static PhysicBody3d nullPB;
 
-	Vec3 current_position;
 	float radius;
-
-protected:
+	Vec3 current_position;
 	Vec3 old_position;
 	Vec3 acceleration = {};
 	sf::Color color;

@@ -462,10 +462,22 @@ public:
         int ti, pi;
         bucketing.bucketFor(direction, ti, pi);
 
+        // A phi bucket's physical width shrinks toward the poles (it scales with
+        // sin(theta), the local radius of the sphere's latitude circle - a fixed
+        // +/-1 bucket margin covers less and less real distance there), so a
+        // triangle can be geometrically close but many phi-buckets away in angle.
+        // Widen the phi search proportionally to 1/sin(theta) to keep the
+        // physical margin roughly constant near the equator's; clamp so it just
+        // wraps the whole ring once that would cover it anyway (which is
+        // correct right at a pole, where every phi is nearly the same point).
+        const float midTheta = (ti + 0.5f) * M_PIF / bucketing.thetaCount;
+        const float sinTheta = std::max(0.05f, std::sin(midTheta));
+        const int phiRadius = std::min(bucketing.phiCount / 2, static_cast<int>(std::ceil(1.f / sinTheta)));
+
         for (int dt = -1; dt <= 1; ++dt)
         {
             const int t = std::clamp(ti + dt, 0, bucketing.thetaCount - 1);
-            for (int dp = -1; dp <= 1; ++dp)
+            for (int dp = -phiRadius; dp <= phiRadius; ++dp)
             {
                 const int p = ((pi + dp) % bucketing.phiCount + bucketing.phiCount) % bucketing.phiCount;
                 const auto& bucket = buckets[static_cast<size_t>(t) * bucketing.phiCount + p];

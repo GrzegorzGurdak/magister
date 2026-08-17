@@ -42,7 +42,7 @@ int main(int argc, char** argv)
 
     StatElement statElement(font);
 
-    PhysicSolver3d sandbox(ChunkGrid3d(20.f, 2.f, Vec3(-200.f, -200.f, -200.f), Vec3(200.f, 200.f, 200.f)), &ball);
+    PhysicSolver3d sandbox(ChunkGrid3d(20.f, 1.f, Vec3(-200.f, -200.f, -200.f), Vec3(200.f, 200.f, 200.f)), &ball);
 	PhysicDrawer3d sandbox_draw(sandbox);
 
     // acceleration function: to the center of Vec3(0,0,0)
@@ -62,9 +62,11 @@ int main(int argc, char** argv)
     for(int i = 0; i < 1000; i++)
     {
         PhysicBody3d* obj = new PhysicBody3d(
-            Vec3::random_rad(60.f, 100.f),
-            2.f,
-            sf::Color(rand() % 256, rand() % 256, rand() % 256)
+            Vec3::random_rad(80.f, 100.f),
+            1.f,
+            // sf::Color(rand() % 256, rand() % 256, rand() % 256)
+            //ocean blue sf::Color(0, 105, 148)
+            sf::Color(11, 57, 135)
         );
         sandbox.add(obj);
         // controlObj = obj; //last added object will be for debug
