@@ -177,17 +177,26 @@ void ChunkGrid3d::rebuild_pool() {
 }
 
 void ChunkGrid3d::assignGrid(std::vector<PhysicBody3d*>& obj) {
-    for (auto& i : grid) {
-        i.clear();
+    // Clear only what was actually populated last call (not every cell in the
+    // grid), and rebuild occupied_cells as particles are placed - O(particles),
+    // not O(all cells).
+    for (int index : occupied_cells) {
+        grid[index].clear();
     }
+    occupied_cells.clear();
 
     for (auto& i : obj) {
         int x = int((i->getPos().x - beginning.x) / cellSize);
         int y = int((i->getPos().y - beginning.y) / cellSize);
         int z = int((i->getPos().z - beginning.z) / cellSize);
-        if (0 <= x && x < grid_width && 0 <= y && y < grid_height && 0 <= z && z < grid_depth)
-            grid.at(array_index(x,y,z)).push_back(i);
-        else {
+        if (0 <= x && x < grid_width && 0 <= y && y < grid_height && 0 <= z && z < grid_depth) {
+            const int index = array_index(x, y, z);
+            Chunk3d& cell = grid[index];
+            if (cell.size == 0) {
+                occupied_cells.push_back(index);
+            }
+            cell.push_back(i);
+        } else {
             std::cout << "Object out of bounds: " << i->getPos().x << ", " << i->getPos().y << ", " << i->getPos().z << std::endl;
         }
     }
@@ -202,6 +211,7 @@ void ChunkGrid3d::updateChunkSize(PhysicBody3d* obj) {
         grid_height = window_height / cellSize;
         grid_depth = window_depth / cellSize;
         grid = std::vector<Chunk3d>(grid_width*grid_height*grid_depth);
+        occupied_cells.clear(); // stale indices into the old grid layout otherwise
         needs_rebuild = true;
     }
 
@@ -253,29 +263,24 @@ void ChunkGrid3d::update_collision_mt() {
         return;
     }
 
-    const int interior_width = grid_width - 2;
-    const int thread_count = std::min(omp_get_max_threads(), interior_width);
-
-    if (thread_count <= 0) {
+    // Walk occupied_cells (built by assignGrid) instead of the grid's full x/y/z
+    // extent - with a fine grid over a domain much bigger than where the
+    // particles actually cluster, that's the difference between visiting a
+    // handful of cells and visiting hundreds of thousands of empty ones every
+    // substep. grid is only ever read here (corrections are deferred into each
+    // thread's own vector and applied afterward), so unlike before there's no
+    // correctness reason to partition by spatial region - a plain contiguous
+    // split of the occupied-cell list is simpler and, for a clustered
+    // distribution, better balanced than an x-range split could ever be (an
+    // x-slice with no particles in it left that thread with nothing to do).
+    const int cell_count = static_cast<int>(occupied_cells.size());
+    if (cell_count == 0) {
         return;
     }
 
-    struct XRange {
-        int begin;
-        int end;
-    };
-
-    std::vector<XRange> ranges;
-    ranges.reserve(thread_count);
-
-    const int base_width = interior_width / thread_count;
-    const int remainder = interior_width % thread_count;
-
-    int current_x = 1;
-    for (int thread_index = 0; thread_index < thread_count; ++thread_index) {
-        const int slice_width = base_width + (thread_index < remainder ? 1 : 0);
-        ranges.push_back({ current_x, current_x + slice_width });
-        current_x += slice_width;
+    const int thread_count = std::min(omp_get_max_threads(), cell_count);
+    if (thread_count <= 0) {
+        return;
     }
 
     std::vector<std::vector<CollisionCorrection>> thread_corrections(thread_count);
@@ -284,50 +289,59 @@ void ChunkGrid3d::update_collision_mt() {
     {
         const int thread_index = omp_get_thread_num();
         std::vector<CollisionCorrection>& corrections = thread_corrections[thread_index];
-        const int x_begin = ranges[thread_index].begin;
-        const int x_end = ranges[thread_index].end;
 
-        for (int x = x_begin; x < x_end; ++x) {
-            for (int y = 1; y < grid_height - 1; ++y) {
-                for (int z = 1; z < grid_depth - 1; ++z) {
-                    Chunk3d& cell = grid.at(array_index(x, y, z));
-                    if (cell.size == 0) {
-                        continue;
-                    }
+        const int base = cell_count / thread_count;
+        const int remainder = cell_count % thread_count;
+        const int begin = thread_index * base + std::min(thread_index, remainder);
+        const int end = begin + base + (thread_index < remainder ? 1 : 0);
 
-                    for (int first_index = 0; first_index < cell.size; ++first_index) {
-                        PhysicBody3d* first = cell[first_index];
-                        for (int second_index = first_index + 1; second_index < cell.size; ++second_index) {
-                            accumulate_collision_pair(first, cell[second_index], corrections);
+        for (int oc = begin; oc < end; ++oc) {
+            const int index = occupied_cells[oc];
+            const int z = index / (grid_width * grid_height);
+            const int rem = index % (grid_width * grid_height);
+            const int y = rem / grid_width;
+            const int x = rem % grid_width;
+
+            // Border cells are intentionally excluded from collision (matches
+            // update_collision()'s [1, dim-2] range) - a particle assigned to
+            // the outermost ring is never checked, same as before.
+            if (x < 1 || x >= grid_width - 1 || y < 1 || y >= grid_height - 1 || z < 1 || z >= grid_depth - 1) {
+                continue;
+            }
+
+            Chunk3d& cell = grid[index];
+
+            for (int first_index = 0; first_index < cell.size; ++first_index) {
+                PhysicBody3d* first = cell[first_index];
+                for (int second_index = first_index + 1; second_index < cell.size; ++second_index) {
+                    accumulate_collision_pair(first, cell[second_index], corrections);
+                }
+            }
+
+            for (int dx = -1; dx <= 1; ++dx) {
+                for (int dy = -1; dy <= 1; ++dy) {
+                    for (int dz = -1; dz <= 1; ++dz) {
+                        if (dz < 0 || (dz == 0 && dy < 0) || (dz == 0 && dy == 0 && dx <= 0)) {
+                            continue;
                         }
-                    }
 
-                    for (int dx = -1; dx <= 1; ++dx) {
-                        for (int dy = -1; dy <= 1; ++dy) {
-                            for (int dz = -1; dz <= 1; ++dz) {
-                                if (dz < 0 || (dz == 0 && dy < 0) || (dz == 0 && dy == 0 && dx <= 0)) {
-                                    continue;
-                                }
+                        const int nx = x + dx;
+                        const int ny = y + dy;
+                        const int nz = z + dz;
 
-                                const int nx = x + dx;
-                                const int ny = y + dy;
-                                const int nz = z + dz;
+                        if (nx < 1 || nx >= grid_width - 1 || ny < 1 || ny >= grid_height - 1 || nz < 1 || nz >= grid_depth - 1) {
+                            continue;
+                        }
 
-                                if (nx < 1 || nx >= grid_width - 1 || ny < 1 || ny >= grid_height - 1 || nz < 1 || nz >= grid_depth - 1) {
-                                    continue;
-                                }
+                        Chunk3d& neighbor = grid[array_index(nx, ny, nz)];
+                        if (neighbor.size == 0) {
+                            continue;
+                        }
 
-                                Chunk3d& neighbor = grid.at(array_index(nx, ny, nz));
-                                if (neighbor.size == 0) {
-                                    continue;
-                                }
-
-                                for (int first_index = 0; first_index < cell.size; ++first_index) {
-                                    PhysicBody3d* first = cell[first_index];
-                                    for (int second_index = 0; second_index < neighbor.size; ++second_index) {
-                                        accumulate_collision_pair(first, neighbor[second_index], corrections);
-                                    }
-                                }
+                        for (int first_index = 0; first_index < cell.size; ++first_index) {
+                            PhysicBody3d* first = cell[first_index];
+                            for (int second_index = 0; second_index < neighbor.size; ++second_index) {
+                                accumulate_collision_pair(first, neighbor[second_index], corrections);
                             }
                         }
                     }
@@ -371,8 +385,8 @@ void ChunkGrid3d::solve_collision(Chunk3d& central_chunk, Chunk3d& neighboring_c
 int ChunkGrid3d::count() {
     int sum{};
 
-    for (auto& i : grid) {
-        sum += i.size;
+    for (int index : occupied_cells) {
+        sum += grid[index].size;
     }
     return sum;
 }
@@ -556,30 +570,78 @@ void PhysicSolver3d::update_planet_collision_heightfield() {
             continue;
         }
 
-        // Narrow phase: the triangle grid's home bucket for this direction plus
-        // its neighbors covers every triangle that could plausibly be the
-        // closest one - the same "center cell + neighbors" shape ChunkGrid3d
-        // uses for particle-particle collision, just bucketed by direction
-        // instead of position. Resolve against the real geometry (exact
-        // closest_point_on_triangle), not an interpolated estimate: that's what
-        // makes this robust right at a cliff edge, where a height-field-derived
-        // normal kept going wrong no matter how the approximation was tuned.
-        // Compares squared distances so the (relatively expensive) sqrt only
-        // runs once, for the eventual winner, instead of once per candidate.
+        const float radiusSq = radius * radius;
         float bestDistSq = std::numeric_limits<float>::max();
         Vec3 bestClosest{};
-        planetTriangleGrid->forEachNearby(toBody, [&](int triIdx) {
-            const Triangle3d& tri = triangles[triIdx];
+        int bestTriIdx = -1;
+
+        // Sticky cache: a resting body sits on the same patch of ground for many
+        // consecutive substeps, so try its last resolving triangle first. A hit
+        // skips the bucket search entirely - it's the exact same
+        // closest_point_on_triangle math as the full search below, just against
+        // one candidate instead of ~20, so it's always a genuinely valid
+        // correction even if it turns out not to be the globally closest
+        // triangle. A miss (particle rolled off it, or never had one) just
+        // falls through to the full search, which then refreshes the cache.
+        //
+        // Capped at kRestingTriangleMaxAge consecutive hits: near a mesh edge
+        // where two triangles meet at different angles, "still overlapping"
+        // isn't the same as "still the best match", and staying locked onto a
+        // no-longer-closest triangle biases the correction normal sideways -
+        // a bias that compounds substep over substep into a fast slide. A
+        // periodic forced re-search re-anchors to the true nearest triangle.
+        constexpr int kRestingTriangleMaxAge = 4;
+        if (body->restingTriangle >= 0 && body->restingTriangleAge < kRestingTriangleMaxAge &&
+            static_cast<size_t>(body->restingTriangle) < triangles.size()) {
+            const Triangle3d& tri = triangles[body->restingTriangle];
             const Vec3 closest = closest_point_on_triangle(bodyPos, tri.p0, tri.p1, tri.p2);
             const Vec3 diff = bodyPos - closest;
             const float dSq = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
-            if (dSq < bestDistSq) {
+            if (dSq < radiusSq) {
                 bestDistSq = dSq;
                 bestClosest = closest;
+                bestTriIdx = body->restingTriangle;
             }
-        });
-        const float radiusSq = radius * radius;
-        if (bestDistSq >= radiusSq || bestDistSq == std::numeric_limits<float>::max()) {
+        }
+
+        // Narrow phase (only on a cache miss): the triangle grid's home bucket
+        // for this direction plus its neighbors covers every triangle that
+        // could plausibly be the closest one - the same "center cell +
+        // neighbors" shape ChunkGrid3d uses for particle-particle collision,
+        // just bucketed by direction instead of position. Resolve against the
+        // real geometry (exact closest_point_on_triangle), not an interpolated
+        // estimate: that's what makes this robust right at a cliff edge, where
+        // a height-field-derived normal kept going wrong no matter how the
+        // approximation was tuned. Compares squared distances so the
+        // (relatively expensive) sqrt only runs once, for the eventual winner.
+        if (bestTriIdx < 0) {
+            planetTriangleGrid->forEachNearby(toBody, [&](int triIdx) {
+                const Triangle3d& tri = triangles[triIdx];
+                const Vec3 closest = closest_point_on_triangle(bodyPos, tri.p0, tri.p1, tri.p2);
+                const Vec3 diff = bodyPos - closest;
+                const float dSq = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+                if (dSq < bestDistSq) {
+                    bestDistSq = dSq;
+                    bestClosest = closest;
+                    bestTriIdx = triIdx;
+                }
+            });
+        }
+
+        // The full search above tracks the globally NEAREST triangle with no
+        // distance gate, so bestTriIdx can be set even when that nearest
+        // triangle is farther than radius away - it just means "closest
+        // candidate found", not "actually touching". Treat that the same as
+        // finding nothing: without this check, overlap = radius - bestDist
+        // goes negative for a merely-nearby (not yet touching) particle, and
+        // normal * (negative overlap) pulls it TOWARD the surface - a
+        // phantom attraction during approach that lets it build up excess
+        // speed before real contact, then overshoot penetration and get
+        // slammed back out next substep. That's what was showing up as an
+        // "explosion" right at the moment of landing.
+        if (bestTriIdx < 0 || bestDistSq >= radiusSq) {
+            body->restingTriangle = -1;
+            body->restingTriangleAge = 0;
             // The exact search found nothing within radius. That's the normal
             // case for a particle genuinely floating above the surface - but
             // it's also what happens when a particle is buried MORE than one
@@ -602,6 +664,11 @@ void PhysicSolver3d::update_planet_collision_heightfield() {
             continue;
         }
 
+        // A cache-hit re-confirms the same triangle index (age keeps climbing
+        // toward the cap); a fresh full-search result resets the clock, even
+        // if it happens to land back on the same triangle.
+        body->restingTriangleAge = (bestTriIdx == body->restingTriangle) ? body->restingTriangleAge + 1 : 0;
+        body->restingTriangle = bestTriIdx;
         const float bestDist = std::sqrt(bestDistSq);
         const Vec3 diff = bodyPos - bestClosest;
         const Vec3 normal = (bestDist <= std::numeric_limits<float>::epsilon())

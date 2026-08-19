@@ -87,6 +87,13 @@ public:
 
 protected:
     std::vector<Chunk3d> grid;
+    // Flat indices (array_index()) of cells that were non-empty after the last
+    // assignGrid() call, rebuilt there as a byproduct of placing particles.
+    // Lets update_collision_mt()/count() visit only cells something is actually
+    // in, instead of the grid's full x/y/z extent - the gap between those two
+    // can be enormous when a fine grid spans a much larger bounding box than the
+    // particles ever actually occupy (e.g. clustered near a planet).
+    std::vector<int> occupied_cells;
     std::vector<PhysicBody3d*> pool; // backing storage for every Chunk3d::data slice
     int per_chunk_capacity{ 0 };
     float min_particle_radius{ 1.f };

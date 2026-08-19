@@ -39,6 +39,24 @@ struct PhysicBody3d
 	bool isHere(Vec3 here) {return (current_position - here).length() < radius; }
 	bool isKinematic = true;
 
+	// Index of the planet-surface triangle that last resolved this body's
+	// collision (see PhysicSolver3d::update_planet_collision_heightfield), or -1.
+	// A resting body sits on the same patch of ground for many consecutive
+	// substeps, so trying this one triangle first before falling back to the
+	// full bucket search turns most substeps into an O(1) check instead of a
+	// ~20-candidate one.
+	int restingTriangle = -1;
+	// How many consecutive substeps restingTriangle has been reused without a
+	// full search. Capped in update_planet_collision_heightfield() - without a
+	// cap, a body resting near a shared edge between two differently-angled
+	// triangles can stay locked onto one of them while its true contact point
+	// drifts toward that edge, picking up a small but consistent tangential
+	// bias each substep. Verlet turns a repeated identical push into a
+	// persistent velocity, so that bias compounds into fast sliding.
+	// Forcing a periodic re-search re-anchors to the true nearest triangle
+	// before that can build up.
+	int restingTriangleAge = 0;
+
 	static PhysicBody3d nullPB;
 
 	float radius;
