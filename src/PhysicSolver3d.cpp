@@ -456,7 +456,15 @@ void PhysicSolver3d::update_acceleration() {
 void PhysicSolver3d::update_constraints() {
     if (constraint_type == DEFAULT) {
         Vec3 sphere_centre(0, 0, 0);
-        float radius = 150;
+        // A single global containment ball centered on the origin, not per-planet -
+        // needs enough radius to comfortably reach every planet's particles, not
+        // just the one at the origin, or an off-center planet's particles get
+        // clipped back toward the origin by this boundary. Must also stay under
+        // the ChunkGrid3d's +-200 box bound (main.cpp) - a sphere of radius <=200
+        // is fully contained in that box on every axis, whereas a larger radius
+        // lets particles legitimately drift past the grid's edge and get
+        // rejected by its bounds check instead.
+        float radius = 195;
         for (auto& i : objects) {
             if (i->isKinematic) {
                 Vec3 diff = i->getPos() - sphere_centre;
@@ -496,11 +504,13 @@ void PhysicSolver3d::update_collision() {
 }
 
 void PhysicSolver3d::update_planet_collision() {
-    if (!planet || objects.empty()) {
+    // Legacy brute-force path, kept only for reference/debugging - not
+    // multi-planet aware, always checks against the first registered planet.
+    if (planets.empty() || objects.empty()) {
         return;
     }
 
-    const std::vector<Triangle3d>& triangles = planet->getSurfaceTriangles();
+    const std::vector<Triangle3d>& triangles = planets[0].planet->getSurfaceTriangles();
     if (triangles.empty()) {
         return;
     }
@@ -535,12 +545,11 @@ void PhysicSolver3d::update_planet_collision() {
 }
 
 void PhysicSolver3d::update_planet_collision_heightfield() {
-    if (!planet || !planetHeightField || !planetTriangleGrid || objects.empty()) {
+    if (planets.empty() || objects.empty()) {
         return;
     }
 
-    const Vec3 center = planet->getPosition();
-    const std::vector<Triangle3d>& triangles = planetTriangleGrid->allTriangles();
+    const int planetCount = static_cast<int>(planets.size());
 
     // Each particle only ever touches its own current_position here (there's no
     // pairwise interaction like in accumulate_collision_pair), so this can write
@@ -553,36 +562,23 @@ void PhysicSolver3d::update_planet_collision_heightfield() {
         }
 
         const Vec3 bodyPos = body->getPos();
-        const Vec3 toBody = bodyPos - center;
-        const float dist = toBody.length();
-        if (dist <= std::numeric_limits<float>::epsilon()) {
-            continue;
-        }
-
         const float radius = body->getRadius();
-
-        // Broad phase: cheap reject via the baked (approximate) height field.
-        // Generous margin since it's only used to skip particles that are
-        // clearly nowhere near the surface - it never resolves a collision by
-        // itself, so it doesn't need to be precise, just fast.
-        const float approxSurfaceRadius = planetHeightField->surfaceRadiusAt(toBody);
-        if (dist > approxSurfaceRadius + radius * 3.f) {
-            continue;
-        }
-
         const float radiusSq = radius * radius;
+
         float bestDistSq = std::numeric_limits<float>::max();
         Vec3 bestClosest{};
         int bestTriIdx = -1;
+        int bestPlanetIdx = -1;
 
         // Sticky cache: a resting body sits on the same patch of ground for many
-        // consecutive substeps, so try its last resolving triangle first. A hit
-        // skips the bucket search entirely - it's the exact same
-        // closest_point_on_triangle math as the full search below, just against
-        // one candidate instead of ~20, so it's always a genuinely valid
-        // correction even if it turns out not to be the globally closest
-        // triangle. A miss (particle rolled off it, or never had one) just
-        // falls through to the full search, which then refreshes the cache.
+        // consecutive substeps, so try its last resolving (planet, triangle)
+        // pair first. A hit skips every planet's bucket search entirely - it's
+        // the exact same closest_point_on_triangle math as the full search
+        // below, just against one candidate instead of ~20, so it's always a
+        // genuinely valid correction even if it turns out not to be the
+        // globally closest triangle. A miss (particle rolled off it, or never
+        // had one) just falls through to the full search, which then
+        // refreshes the cache.
         //
         // Capped at kRestingTriangleMaxAge consecutive hits: near a mesh edge
         // where two triangles meet at different angles, "still overlapping"
@@ -591,41 +587,67 @@ void PhysicSolver3d::update_planet_collision_heightfield() {
         // a bias that compounds substep over substep into a fast slide. A
         // periodic forced re-search re-anchors to the true nearest triangle.
         constexpr int kRestingTriangleMaxAge = 4;
-        if (body->restingTriangle >= 0 && body->restingTriangleAge < kRestingTriangleMaxAge &&
-            static_cast<size_t>(body->restingTriangle) < triangles.size()) {
-            const Triangle3d& tri = triangles[body->restingTriangle];
-            const Vec3 closest = closest_point_on_triangle(bodyPos, tri.p0, tri.p1, tri.p2);
-            const Vec3 diff = bodyPos - closest;
-            const float dSq = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
-            if (dSq < radiusSq) {
-                bestDistSq = dSq;
-                bestClosest = closest;
-                bestTriIdx = body->restingTriangle;
-            }
-        }
-
-        // Narrow phase (only on a cache miss): the triangle grid's home bucket
-        // for this direction plus its neighbors covers every triangle that
-        // could plausibly be the closest one - the same "center cell +
-        // neighbors" shape ChunkGrid3d uses for particle-particle collision,
-        // just bucketed by direction instead of position. Resolve against the
-        // real geometry (exact closest_point_on_triangle), not an interpolated
-        // estimate: that's what makes this robust right at a cliff edge, where
-        // a height-field-derived normal kept going wrong no matter how the
-        // approximation was tuned. Compares squared distances so the
-        // (relatively expensive) sqrt only runs once, for the eventual winner.
-        if (bestTriIdx < 0) {
-            planetTriangleGrid->forEachNearby(toBody, [&](int triIdx) {
-                const Triangle3d& tri = triangles[triIdx];
+        if (body->restingPlanet >= 0 && body->restingPlanet < planetCount &&
+            body->restingTriangleAge < kRestingTriangleMaxAge) {
+            const std::vector<Triangle3d>& triangles = planets[body->restingPlanet].triangleGrid->allTriangles();
+            if (body->restingTriangle >= 0 && static_cast<size_t>(body->restingTriangle) < triangles.size()) {
+                const Triangle3d& tri = triangles[body->restingTriangle];
                 const Vec3 closest = closest_point_on_triangle(bodyPos, tri.p0, tri.p1, tri.p2);
                 const Vec3 diff = bodyPos - closest;
                 const float dSq = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
-                if (dSq < bestDistSq) {
+                if (dSq < radiusSq) {
                     bestDistSq = dSq;
                     bestClosest = closest;
-                    bestTriIdx = triIdx;
+                    bestTriIdx = body->restingTriangle;
+                    bestPlanetIdx = body->restingPlanet;
                 }
-            });
+            }
+        }
+
+        // Narrow phase (only on a cache miss): try every registered planet.
+        // Each planet's own height field is a cheap "is this particle
+        // anywhere near this particular planet" broad-phase reject first -
+        // with planets typically far apart, only the one a particle is
+        // actually near ever pays for the real bucket search below, so extra
+        // planets cost ~one height-field lookup each, not an extra full
+        // search each. The triangle grid's home bucket for this direction
+        // plus its neighbors covers every triangle that could plausibly be
+        // the closest one - the same "center cell + neighbors" shape
+        // ChunkGrid3d uses for particle-particle collision, just bucketed by
+        // direction instead of position. Resolve against the real geometry
+        // (exact closest_point_on_triangle), not an interpolated estimate:
+        // that's what makes this robust right at a cliff edge, where a
+        // height-field-derived normal kept going wrong no matter how the
+        // approximation was tuned. Compares squared distances so the
+        // (relatively expensive) sqrt only runs once, for the eventual winner.
+        if (bestTriIdx < 0) {
+            for (int p = 0; p < planetCount; ++p) {
+                const PlanetCollisionData& pd = planets[p];
+                const Vec3 toBody = bodyPos - pd.planet->getPosition();
+                const float dist = toBody.length();
+                if (dist <= std::numeric_limits<float>::epsilon()) {
+                    continue;
+                }
+
+                const float approxSurfaceRadius = pd.heightField->surfaceRadiusAt(toBody);
+                if (dist > approxSurfaceRadius + radius * 3.f) {
+                    continue;
+                }
+
+                const std::vector<Triangle3d>& triangles = pd.triangleGrid->allTriangles();
+                pd.triangleGrid->forEachNearby(toBody, [&](int triIdx) {
+                    const Triangle3d& tri = triangles[triIdx];
+                    const Vec3 closest = closest_point_on_triangle(bodyPos, tri.p0, tri.p1, tri.p2);
+                    const Vec3 diff = bodyPos - closest;
+                    const float dSq = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+                    if (dSq < bestDistSq) {
+                        bestDistSq = dSq;
+                        bestClosest = closest;
+                        bestTriIdx = triIdx;
+                        bestPlanetIdx = p;
+                    }
+                });
+            }
         }
 
         // The full search above tracks the globally NEAREST triangle with no
@@ -641,34 +663,54 @@ void PhysicSolver3d::update_planet_collision_heightfield() {
         // "explosion" right at the moment of landing.
         if (bestTriIdx < 0 || bestDistSq >= radiusSq) {
             body->restingTriangle = -1;
+            body->restingPlanet = -1;
             body->restingTriangleAge = 0;
-            // The exact search found nothing within radius. That's the normal
-            // case for a particle genuinely floating above the surface - but
-            // it's also what happens when a particle is buried MORE than one
-            // radius deep (the nearest candidate triangle is then farther than
-            // radius away too) or when the triangle bucket neighborhood just
-            // missed the true nearest triangle. Those look identical from
-            // bestDistSq alone, so without this fallback a buried particle gets
-            // zero corrective force forever - it's permanently stuck, since
-            // nothing else in this function ever revisits it. The (coarser,
+            // The exact search found nothing within radius on any planet.
+            // That's the normal case for a particle genuinely floating above
+            // every surface - but it's also what happens when a particle is
+            // buried MORE than one radius deep into some planet (the nearest
+            // candidate triangle is then farther than radius away too) or
+            // when a triangle bucket neighborhood just missed the true
+            // nearest triangle. Those look identical from bestDistSq alone,
+            // so without this fallback a buried particle gets zero corrective
+            // force forever - it's permanently stuck, since nothing else in
+            // this function ever revisits it. Each planet's (coarser,
             // already-computed) height field can tell the difference: if the
-            // particle's radial distance is less than the approximate terrain
-            // height here, it's below the surface and needs to be nudged back
-            // out, capped and softened the same way as a normal correction so
-            // a deeply-buried particle walks back out over several substeps
-            // instead of snapping out in one.
-            if (dist < approxSurfaceRadius) {
-                const float buriedOverlap = std::min(approxSurfaceRadius + radius - dist, radius);
-                body->current_position += (toBody / dist) * (buriedOverlap * 0.5f);
+            // particle's radial distance from that planet's center is less
+            // than the approximate terrain height there, it's below that
+            // planet's surface and needs to be nudged back out, capped and
+            // softened the same way as a normal correction so a
+            // deeply-buried particle walks back out over several substeps
+            // instead of snapping out in one. A particle can only plausibly
+            // be buried in one planet at a time (planets aren't expected to
+            // overlap), so stop at the first match.
+            for (int p = 0; p < planetCount; ++p) {
+                const PlanetCollisionData& pd = planets[p];
+                const Vec3 toBody = bodyPos - pd.planet->getPosition();
+                const float dist = toBody.length();
+                if (dist <= std::numeric_limits<float>::epsilon()) {
+                    continue;
+                }
+                const float approxSurfaceRadius = pd.heightField->surfaceRadiusAt(toBody);
+                if (dist < approxSurfaceRadius) {
+                    const float buriedOverlap = std::min(approxSurfaceRadius + radius - dist, radius);
+                    body->current_position += (toBody / dist) * (buriedOverlap * 0.5f);
+                    break;
+                }
             }
             continue;
         }
 
-        // A cache-hit re-confirms the same triangle index (age keeps climbing
-        // toward the cap); a fresh full-search result resets the clock, even
-        // if it happens to land back on the same triangle.
-        body->restingTriangleAge = (bestTriIdx == body->restingTriangle) ? body->restingTriangleAge + 1 : 0;
+        // A cache-hit re-confirms the same (planet, triangle) pair (age keeps
+        // climbing toward the cap); a fresh full-search result resets the
+        // clock, even if it happens to land back on the same pair.
+        body->restingTriangleAge = (bestTriIdx == body->restingTriangle && bestPlanetIdx == body->restingPlanet)
+            ? body->restingTriangleAge + 1 : 0;
         body->restingTriangle = bestTriIdx;
+        body->restingPlanet = bestPlanetIdx;
+
+        const Vec3 toBody = bodyPos - planets[bestPlanetIdx].planet->getPosition();
+        const float dist = toBody.length();
         const float bestDist = std::sqrt(bestDistSq);
         const Vec3 diff = bodyPos - bestClosest;
         const Vec3 normal = (bestDist <= std::numeric_limits<float>::epsilon())

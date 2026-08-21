@@ -39,6 +39,10 @@ struct PhysicBody3d
 	bool isHere(Vec3 here) {return (current_position - here).length() < radius; }
 	bool isKinematic = true;
 
+	// Which planet (index into PhysicSolver3d::planets) restingTriangle refers
+	// to, or -1. Needed once there's more than one planet - a triangle index is
+	// only meaningful relative to a specific planet's triangle list.
+	int restingPlanet = -1;
 	// Index of the planet-surface triangle that last resolved this body's
 	// collision (see PhysicSolver3d::update_planet_collision_heightfield), or -1.
 	// A resting body sits on the same patch of ground for many consecutive

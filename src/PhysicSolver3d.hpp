@@ -122,25 +122,50 @@ protected:
 
 class PhysicSolver3d{
 public:
+    // Per-planet broad/narrow-phase collision data - see addPlanet().
+    struct PlanetCollisionData {
+        const Planet* planet;
+        std::unique_ptr<SphereHeightField> heightField;
+        std::unique_ptr<SphereTriangleGrid> triangleGrid;
+    };
+
     // update_planet_collision_heightfield() is a two-phase check: the height field
     // (thetaHeightSamples/phiHeightSamples) is only a cheap "is this particle
     // anywhere near the surface" broad-phase reject, so it doesn't need to be
     // finer than the particles it's rejecting are - actual collision resolution
     // uses the exact mesh triangles, looked up via the triangle grid
     // (thetaTriBuckets/phiTriBuckets) instead of brute-forcing every triangle.
-    // Both ignored if planet is null.
+    // planet is ignored if null; use addPlanet() for any additional planets.
     PhysicSolver3d(ChunkGrid3d g, const Planet* planet = nullptr,
         int thetaHeightSamples = 128, int phiHeightSamples = 256,
         int thetaTriBuckets = 64, int phiTriBuckets = 128)
-        : grid{ std::move(g) }, planet{ planet },
-          planetHeightField{ planet ? std::make_unique<SphereHeightField>(*planet, thetaHeightSamples, phiHeightSamples) : nullptr },
-          planetTriangleGrid{ planet ? std::make_unique<SphereTriangleGrid>(*planet, thetaTriBuckets, phiTriBuckets) : nullptr }
-    {}
+        : grid{ std::move(g) }
+    {
+        if (planet) {
+            addPlanet(planet, thetaHeightSamples, phiHeightSamples, thetaTriBuckets, phiTriBuckets);
+        }
+    }
     ~PhysicSolver3d() {
         for (auto& i : objects) { delete(i); }
         for (auto& i : links) { delete(i); }
     }
 
+    // Registers another planet for planet-collision checks. Each planet gets
+    // its own height field + triangle grid, built once here. A particle pays
+    // for this per extra planet only as one cheap height-field broad-phase
+    // reject per substep - the expensive exact-triangle search still only
+    // runs against whichever planet(s) actually pass that reject, which in
+    // practice is at most the one planet a given particle is actually near.
+    void addPlanet(const Planet* planet,
+        int thetaHeightSamples = 128, int phiHeightSamples = 256,
+        int thetaTriBuckets = 64, int phiTriBuckets = 128)
+    {
+        planets.push_back(PlanetCollisionData{
+            planet,
+            std::make_unique<SphereHeightField>(*planet, thetaHeightSamples, phiHeightSamples),
+            std::make_unique<SphereTriangleGrid>(*planet, thetaTriBuckets, phiTriBuckets)
+        });
+    }
 
     PhysicSolver3d& add(PhysicBody3d* obj);
     PhysicSolver3d& addLink(PhysicLink3d* obj) { links.push_back(obj); return *this; }
@@ -181,9 +206,7 @@ public:
 protected:
     std::vector<PhysicLink3d*> links{};
     ChunkGrid3d grid;
-    const Planet* planet;
-    std::unique_ptr<SphereHeightField> planetHeightField;
-    std::unique_ptr<SphereTriangleGrid> planetTriangleGrid;
+    std::vector<PlanetCollisionData> planets;
     friend class PhysicDrawer;
 
     enum { FUNC, NONE, VALUE, DEFAULT } acceleration_type{ NONE }, constraint_type{ DEFAULT };
